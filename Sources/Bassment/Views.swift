@@ -1,13 +1,24 @@
 import SwiftUI
 
 struct BassmentApp: App {
-    @StateObject private var c = Controller()
+    @StateObject private var c: Controller
+
+    init() {
+        // Created here, not lazily: with no window at launch, SwiftUI would otherwise build the
+        // controller only when a menu or window opens, and audio would not be processed until then.
+        let controller = Controller()
+        _c = StateObject(wrappedValue: controller)
+    }
 
     var body: some Scene {
         Window("Bassment", id: "main") {
             MainView(c: c)
+                .onAppear { c.windowOpen = true }
+                .onDisappear { c.windowOpen = false }
         }
         .windowResizability(.contentSize)
+        .defaultLaunchBehavior(.suppressed) // start quietly in the menu bar (login item)
+        .restorationBehavior(.disabled)      // and do not reopen a window left open at quit
         MenuBarExtra("Bassment", systemImage: "slider.vertical.3") {
             QuickView(c: c)
         }
@@ -321,11 +332,13 @@ struct MainView: View {
 struct EQGraph: View {
     @ObservedObject var c: Controller
     @StateObject private var d = DragState()
+    @Environment(\.appearsActive) private var active
     private let range: Double = 18
 
     var body: some View {
         GeometryReader { geo in
-            TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
+            // Redraw only while the window is in front: a hidden graph costs CPU for nothing.
+            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: !active)) { _ in
                 Canvas { ctx, size in draw(ctx, size) }
             }
             .contentShape(Rectangle())

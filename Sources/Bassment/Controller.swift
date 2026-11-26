@@ -21,6 +21,8 @@ final class Controller: ObservableObject {
     @Published private(set) var sampleRate: Double = 48000
     @Published private(set) var auto = AutoEQ()
     private var ticks = 0
+    /// The process list costs a round of HAL queries; only refresh it when something uses it.
+    var windowOpen = false { didSet { if windowOpen { processes = AppProcess.all() } } }
 
     let analyzer = Analyzer()
     let components: [AVAudioUnitComponent]
@@ -33,6 +35,7 @@ final class Controller: ObservableObject {
     private let debug = ProcessInfo.processInfo.environment["BASSMENT_DEBUG"] != nil
 
     init() {
+        NSLog("Bassment: controller init")
         settings = Settings.load()
         components = [kAudioUnitType_Effect, kAudioUnitType_MusicEffect].flatMap {
             AVAudioUnitComponentManager.shared().components(matching: AudioComponentDescription(
@@ -285,6 +288,7 @@ final class Controller: ObservableObject {
     }
 
     private func doRebuild() async {
+        NSLog("Bassment: rebuild (enabled=%d, output=%@)", settings.enabled ? 1 : 0, outputName)
         rebuilding = true
         defer { rebuilding = false }
         if let p = pipeline {
@@ -297,6 +301,7 @@ final class Controller: ObservableObject {
         }
         analyzer.clear()
         guard settings.enabled else { status = "Off"; return }
+        processes = AppProcess.all()
         if let other = Self.conflictingApp() {
             status = "Quit \(other.localizedName ?? "the other EQ app") first: two system EQs loop the audio"
             return
@@ -307,9 +312,7 @@ final class Controller: ObservableObject {
             pipeline = p
             sampleRate = p.sampleRate
             status = p.failedPlugins.isEmpty ? "Active" : "Failed to load: \(p.failedPlugins.joined(separator: ", "))"
-            if debug {
-                NSLog("Bassment: taps=%@ inputs=%@ sr=%.0f", "\(p.tapBundles)", "\(CA.inputLayout(p.aggregate))", p.sampleRate)
-            }
+            NSLog("Bassment: active, taps=%@ inputs=%@ sr=%.0f", "\(p.tapBundles)", "\(CA.inputLayout(p.aggregate))", p.sampleRate)
         } catch {
             status = "Error: \(error)"
             NSLog("Bassment: %@", "\(error)")
@@ -364,7 +367,7 @@ final class Controller: ObservableObject {
 
     private func tick() {
         runAuto()
-        processes = AppProcess.all()
+        if windowOpen || !settings.appVolumes.isEmpty { processes = AppProcess.all() }
         if debug {
             let level = (0..<Analyzer.size).reduce(Float(0)) { max($0, abs(analyzer.ring[$1])) }
             NSLog("Bassment: pico=%.4f", level)
