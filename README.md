@@ -19,6 +19,7 @@ IOProc ─► AVAudioEngine (manual render): EQ → plugins → room → limiter
 ```bash
 ./scripts/bundle.sh                 # builds build/Bassment.app (ad hoc signature)
 ./scripts/install.sh                # builds, installs to /Applications and restarts it
+swift scripts/icon.swift            # redraws Resources/ (app and menu bar icons)
 .build/release/Bassment --selftest
 ```
 

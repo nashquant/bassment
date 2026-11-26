@@ -3,6 +3,14 @@ import SwiftUI
 struct BassmentApp: App {
     @StateObject private var c: Controller
 
+    /// The "B" from the app icon, as a template so macOS tints it for light/dark menu bars.
+    static let menuBarIcon: NSImage = {
+        let img = Bundle.main.image(forResource: "MenuBarIcon") ?? NSImage(systemSymbolName: "slider.vertical.3", accessibilityDescription: nil)!
+        img.isTemplate = true
+        img.accessibilityDescription = "Bassment"
+        return img
+    }()
+
     init() {
         // Created here, not lazily: with no window at launch, SwiftUI would otherwise build the
         // controller only when a menu or window opens, and audio would not be processed until then.
@@ -19,8 +27,10 @@ struct BassmentApp: App {
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(.suppressed) // start quietly in the menu bar (login item)
         .restorationBehavior(.disabled)      // and do not reopen a window left open at quit
-        MenuBarExtra("Bassment", systemImage: "slider.vertical.3") {
+        MenuBarExtra {
             QuickView(c: c)
+        } label: {
+            Image(nsImage: Self.menuBarIcon)
         }
         .menuBarExtraStyle(.window)
     }
