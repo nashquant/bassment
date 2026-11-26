@@ -107,13 +107,9 @@ enum OutputKind: String, Codable, CaseIterable, Identifiable {
     var label: String { self == .headphones ? "Headphones" : "Speakers" }
 }
 
-/// Everything remembered per output device.
+/// Automatic per-device optimization. The preset and sliders are global (Settings).
 struct DeviceProfile: Codable {
     var kind: OutputKind = .speakers
-    var style = "flat"            // built-in preset id, or "custom:<uuid>"
-    var bass: Float = 0
-    var mid: Float = 0
-    var treble: Float = 0
     var correction: [Band] = []
     var correctionSource = ""
     var correctionOn = false
@@ -124,10 +120,6 @@ struct DeviceProfile: Codable {
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         kind = try c.decodeIfPresent(OutputKind.self, forKey: .kind) ?? .speakers
-        style = try c.decodeIfPresent(String.self, forKey: .style) ?? "flat"
-        bass = try c.decodeIfPresent(Float.self, forKey: .bass) ?? 0
-        mid = try c.decodeIfPresent(Float.self, forKey: .mid) ?? 0
-        treble = try c.decodeIfPresent(Float.self, forKey: .treble) ?? 0
         correction = try c.decodeIfPresent([Band].self, forKey: .correction) ?? []
         correctionSource = try c.decodeIfPresent(String.self, forKey: .correctionSource) ?? ""
         correctionOn = try c.decodeIfPresent(Bool.self, forKey: .correctionOn) ?? false
@@ -137,6 +129,10 @@ struct DeviceProfile: Codable {
 struct Settings: Codable {
     var enabled = true
     var avoidClipping = false             // eqMac default: no gain compensation
+    var style = "flat"                    // built-in preset id, or "custom:<uuid>"
+    var bass: Float = 0
+    var mid: Float = 0
+    var treble: Float = 0
     var presets: [Preset] = []
     var devices: [String: DeviceProfile] = [:] // output device UID → profile
     var appVolumes: [String: Float] = [:]      // bundle ID → gain 0…1
@@ -148,6 +144,10 @@ struct Settings: Codable {
         let c = try d.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         avoidClipping = try c.decodeIfPresent(Bool.self, forKey: .avoidClipping) ?? false
+        style = try c.decodeIfPresent(String.self, forKey: .style) ?? "flat"
+        bass = try c.decodeIfPresent(Float.self, forKey: .bass) ?? 0
+        mid = try c.decodeIfPresent(Float.self, forKey: .mid) ?? 0
+        treble = try c.decodeIfPresent(Float.self, forKey: .treble) ?? 0
         presets = (try? c.decodeIfPresent([Preset].self, forKey: .presets)) ?? []
         devices = (try? c.decodeIfPresent([String: DeviceProfile].self, forKey: .devices)) ?? [:]
         appVolumes = try c.decodeIfPresent([String: Float].self, forKey: .appVolumes) ?? [:]

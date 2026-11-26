@@ -59,6 +59,7 @@ final class Controller: ObservableObject {
         if let k = knownCorrections.first(where: { name.localizedCaseInsensitiveContains($0.match) }) {
             p.correction = parseAutoEQ(k.text)
             p.correctionSource = k.source
+            p.correctionOn = true
         }
         return p
     }
@@ -73,6 +74,14 @@ final class Controller: ObservableObject {
             CA.string($0, kAudioObjectPropertyName) == name && !CA.inputLayout($0).isEmpty
         }
         return hasMic ? .headphones : .speakers
+    }
+
+    /// One line for the UI: what is being done for this device.
+    var optimization: String {
+        let d = device
+        if d.kind == .headphones && d.correctionOn && !d.correction.isEmpty { return "Optimized: \(d.correctionSource)" }
+        if d.kind == .headphones { return "Headphones · no correction profile" }
+        return "Speakers · no correction profile"
     }
 
     func importCorrection() {
@@ -92,14 +101,14 @@ final class Controller: ObservableObject {
     // MARK: Styles
 
     var customIndex: Int? {
-        guard device.style.hasPrefix("custom:") else { return nil }
-        let id = device.style.dropFirst("custom:".count)
+        guard settings.style.hasPrefix("custom:") else { return nil }
+        let id = settings.style.dropFirst("custom:".count)
         return settings.presets.firstIndex { $0.id.uuidString == id }
     }
 
     var styleName: String {
         if let i = customIndex { return settings.presets[i].name }
-        return Genre.find(device.style)?.name ?? "Flat"
+        return Genre.find(settings.style)?.name ?? "Flat"
     }
 
     /// What actually plays: headphone correction + 10-band graphic EQ (preset + Bass/Mid/Treble) + custom bands.
@@ -110,11 +119,11 @@ final class Controller: ObservableObject {
         if let i = customIndex {
             p = settings.presets[i]
         } else {
-            let g = Genre.find(d.style) ?? Genre.all[0]
+            let g = Genre.find(settings.style) ?? Genre.all[0]
             p = Preset(id: Genre.ownerID, name: g.name)
             gains = g.gains
         }
-        let offsets = basicOffsets(bass: d.bass, mid: d.mid, treble: d.treble)
+        let offsets = basicOffsets(bass: settings.bass, mid: settings.mid, treble: settings.treble)
         gains = zip(gains, offsets).map { $0 + $1 }
         let correction = d.kind == .headphones && d.correctionOn ? d.correction : []
         p.bands = Array((correction + graphicBands(gains) + p.bands.filter(\.on)).prefix(maxBands))
@@ -123,9 +132,9 @@ final class Controller: ObservableObject {
     }
 
     func selectStyle(_ id: String) {
-        guard id != device.style else { return }
+        guard id != settings.style else { return }
         let before = effective.plugins.map(\.id)
-        device.style = id
+        settings.style = id
         if effective.plugins.map(\.id) != before { rebuild() }
     }
 
@@ -138,7 +147,7 @@ final class Controller: ObservableObject {
             p.id = UUID()
             p.name += " copy"
         } else {
-            let g = Genre.find(device.style) ?? Genre.all[0]
+            let g = Genre.find(settings.style) ?? Genre.all[0]
             p = Preset(name: "My \(g.name)", bands: graphicBands(g.gains))
         }
         settings.presets.append(p)
@@ -150,10 +159,7 @@ final class Controller: ObservableObject {
         let hadPlugins = !settings.presets[i].plugins.isEmpty
         let id = "custom:\(settings.presets[i].id.uuidString)"
         settings.presets.remove(at: i)
-        for (uid, var prof) in settings.devices where prof.style == id {
-            prof.style = "flat"
-            settings.devices[uid] = prof
-        }
+        if settings.style == id { settings.style = "flat" }
         if hadPlugins { rebuild() }
     }
 

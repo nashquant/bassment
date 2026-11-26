@@ -29,7 +29,7 @@ struct StyleGrid: View {
     }
 
     private func button(_ name: String, id: String) -> some View {
-        let selected = c.device.style == id
+        let selected = c.settings.style == id
         return Button { c.selectStyle(id) } label: {
             Text(name).lineLimit(1).frame(maxWidth: .infinity).padding(.vertical, 4)
         }
@@ -44,9 +44,9 @@ struct BasicEQ: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            row("Bass", $c.device.bass)
-            row("Mid", $c.device.mid)
-            row("Treble", $c.device.treble)
+            row("Bass", $c.settings.bass)
+            row("Mid", $c.settings.mid)
+            row("Treble", $c.settings.treble)
         }
     }
 
@@ -79,12 +79,16 @@ struct OutputRow: View {
     var body: some View {
         HStack {
             Image(systemName: c.device.kind == .headphones ? "headphones" : "hifispeaker")
-            Text(c.outputName).bold().lineLimit(1)
-            Spacer()
-            Picker("", selection: $c.device.kind) {
-                ForEach(OutputKind.allCases) { Text($0.label).tag($0) }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(c.outputName).bold().lineLimit(1)
+                Text(c.optimization).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 130)
+            Spacer()
+            // Detected automatically; the menu only fixes a wrong guess.
+            Menu(c.device.kind.label) {
+                ForEach(OutputKind.allCases) { k in Button(k.label) { c.device.kind = k } }
+            }
+            .menuStyle(.borderlessButton).fixedSize()
         }
     }
 }
@@ -125,7 +129,7 @@ struct MainView: View {
             VStack(alignment: .leading, spacing: 14) {
                 Header(c: c)
                 OutputRow(c: c)
-                if c.device.kind == .headphones { correction }
+
                 section("Preset") { StyleGrid(c: c) }
                 section("Bass · Mid · Treble") {
                     BasicEQ(c: c)
@@ -133,8 +137,9 @@ struct MainView: View {
                         .font(.callout)
                 }
                 EQGraph(c: c)
-                Text("Preset and sliders are remembered per output. A limiter at the end catches peaks.")
+                Text("Preset and sliders apply to every output. Each device gets its own correction automatically. A limiter at the end catches peaks.")
                     .font(.caption2).foregroundStyle(.secondary)
+                DisclosureGroup("Device correction") { correction.padding(.top, 6) }
                 DisclosureGroup("Edit preset") { editor.padding(.top, 6) }
                 DisclosureGroup("App volume") { apps.padding(.top, 6) }
             }

@@ -53,14 +53,18 @@ func selfTest() -> Bool {
     s.appVolumes["com.spotify.client"] = 0.5
     s.presets = [Preset(name: "p", plugins: [Plugin(name: "x", type: 1, subType: 2, manufacturer: 3)])]
     var prof = DeviceProfile(kind: .headphones)
-    prof.bass = 4
+    prof.correctionOn = true
     s.devices["uid"] = prof
+    s.bass = 4
+    s.style = "bassBooster"
     let back = try? JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(s))
     expect(back?.appVolumes["com.spotify.client"] == 0.5 && back?.presets[0].plugins.first?.subType == 2
-           && back?.devices["uid"]?.bass == 4 && back?.devices["uid"]?.kind == .headphones,
+           && back?.bass == 4 && back?.style == "bassBooster"
+           && back?.devices["uid"]?.correctionOn == true && back?.devices["uid"]?.kind == .headphones,
            "settings JSON round trip")
     let partial = try? JSONDecoder().decode(Settings.self, from: Data(#"{"appVolumes":{"a":0.3}}"#.utf8))
-    expect(partial?.appVolumes["a"] == 0.3 && partial?.enabled == true && partial?.avoidClipping == false,
+    expect(partial?.appVolumes["a"] == 0.3 && partial?.enabled == true && partial?.avoidClipping == false
+           && partial?.style == "flat",
            "missing settings fields fall back to defaults")
 
     let parsed = parseAutoEQ(knownCorrections[0].text)
