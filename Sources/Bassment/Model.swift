@@ -128,7 +128,7 @@ struct DeviceProfile: Codable {
 
 struct Settings: Codable {
     var enabled = true
-    var avoidClipping = false             // eqMac default: no gain compensation
+    var avoidClipping = false             // off: boosts are not compensated
     var style = "flat"                    // built-in preset id, or "custom:<uuid>"
     var bass: Float = 0
     var mid: Float = 0

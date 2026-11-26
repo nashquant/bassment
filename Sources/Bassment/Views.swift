@@ -173,7 +173,6 @@ struct MainView: View {
             HStack {
                 Text("\(c.styleName) is built in.").foregroundStyle(.secondary)
                 Button("Make editable copy", action: c.customize)
-                Button("Import eqMac presets", action: c.importEqMacPresets)
             }
         } else {
             VStack(alignment: .leading, spacing: 8) {

@@ -1,8 +1,8 @@
 import Foundation
 
-// MARK: - Graphic EQ (same engine as eqMac's Basic/Advanced EQ)
+// MARK: - Graphic EQ
 
-/// eqMac: 10 AVAudioUnitEQ .parametric bands, bandwidth 0.5 octave, no global gain compensation.
+/// 10 AVAudioUnitEQ .parametric bands, bandwidth 0.5 octave, no global gain compensation.
 let graphicFreqs: [Float] = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 let graphicQ: Float = 2.87 // = 0.5 octave
 
@@ -10,7 +10,7 @@ func graphicBands(_ gains: [Float]) -> [Band] {
     zip(graphicFreqs, gains).map { Band(kind: .peak, freq: $0, gain: $1, q: graphicQ) }
 }
 
-/// Bass/Mid/Treble map onto the 10 bands exactly like eqMac's Basic EQ.
+/// Bass/Mid/Treble map onto the 10 bands: 3 low, 4 mid, 3 high.
 func basicOffsets(bass: Float, mid: Float, treble: Float) -> [Float] {
     [bass, bass, bass, mid, mid, mid, mid, treble, treble, treble]
 }
@@ -26,8 +26,7 @@ struct Genre: Identifiable {
 
     static func find(_ id: String) -> Genre? { all.first { $0.id == id } }
 
-    // Values from eqMac's ADVANCED_EQUALIZER_DEFAULT_PRESETS (Apache-2.0, see NOTICE),
-    // checked byte-for-byte against the installed eqMac 1.9.2 binary. Blues and Funk are ours.
+    // Third-party preset values: see NOTICE. Blues and Funk are ours.
     static let all: [Genre] = [
         Genre(id: "flat", name: "Flat", gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
         Genre(id: "bassBooster", name: "Bass Booster", gains: [11, 8.5, 7, 5, 2.5, 0, 0, 0, 0, 0]),
@@ -54,24 +53,6 @@ struct Genre: Identifiable {
         Genre(id: "bassReducer", name: "Bass Reducer", gains: [-11, -8.5, -7, -5, -2.5, 0, 0, 0, 0, 0]),
         Genre(id: "trebleReducer", name: "Treble Reducer", gains: [0, 0, 0, 0, 0, -2.5, -5, -7, -8.5, -11]),
     ]
-}
-
-// MARK: - eqMac user presets
-
-/// Reads the user's own Advanced EQ presets from eqMac's preferences.
-func eqMacUserPresets() -> [Preset] {
-    let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences/com.bitgapp.eqmac.plist")
-    guard let plist = NSDictionary(contentsOf: url), let data = plist["advancedEqualizerPresets"] as? Data else { return [] }
-    return parseEqMacPresets(data)
-}
-
-func parseEqMacPresets(_ data: Data) -> [Preset] {
-    struct Gains: Decodable { let global: Float; let bands: [Float] }
-    struct P: Decodable { let name: String; let gains: Gains }
-    let list = (try? JSONDecoder().decode([P].self, from: data)) ?? []
-    return list.filter { $0.gains.bands.count == 10 }.map {
-        Preset(name: $0.name, preamp: $0.gains.global, bands: graphicBands($0.gains.bands))
-    }
 }
 
 // MARK: - Headphone correction (AutoEQ)

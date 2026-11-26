@@ -15,7 +15,7 @@ func selfTest() -> Bool {
     }
 
     expect(abs(qToOctaves(1.4142) - 1) < 0.01, "Q 1.414 = 1 octave")
-    expect(abs(qToOctaves(graphicQ) - 0.5) < 0.01, "graphic band Q = 0.5 octave (eqMac)")
+    expect(abs(qToOctaves(graphicQ) - 0.5) < 0.01, "graphic band Q = 0.5 octave")
 
     let flat = Preset(name: "t", bands: [Band(kind: .peak, freq: 1000, gain: 0, q: 1)])
     expect(abs(responseDB(flat, at: 1000, fs: 48000)) < 1e-6, "0 dB peak is flat")
@@ -28,7 +28,7 @@ func selfTest() -> Bool {
     let boost = Preset(name: "t", bands: graphicBands(Genre.find("bassBooster")!.gains))
     let at32 = responseDB(boost, at: 32, fs: 48000), at4k = responseDB(boost, at: 4000, fs: 48000)
     expect(at32 > 10.5 && at32 < 13 && abs(at4k) < 0.5, "Bass Booster: ~+11 dB at 32 Hz, flat at 4 kHz")
-    expect(basicOffsets(bass: 5, mid: 1, treble: -2) == [5, 5, 5, 1, 1, 1, 1, -2, -2, -2], "Bass/Mid/Treble map like eqMac")
+    expect(basicOffsets(bass: 5, mid: 1, treble: -2) == [5, 5, 5, 1, 1, 1, 1, -2, -2, -2], "Bass/Mid/Treble map 3/4/3 bands")
 
     // Two stereo taps, interleaved, gains 1 and 0.5.
     let frames = 4
@@ -71,9 +71,6 @@ func selfTest() -> Bool {
     expect(parsed.count == 10 && parsed[0].kind == .lowShelf && parsed[1].freq == 9465 && parsed[1].q == 3.34,
            "AutoEQ parse")
 
-    let eqm = parseEqMacPresets(Data(#"[{"id":"x","isDefault":false,"name":"Electro","gains":{"global":0,"bands":[4,4,2,0,-1,-1,0,1,2,2]}}]"#.utf8))
-    expect(eqm.count == 1 && eqm[0].name == "Electro" && eqm[0].bands[0].gain == 4 && eqm[0].bands[9].freq == 16000,
-           "eqMac preset import")
 
     let boosted = [Band(kind: .lowShelf, freq: 90, gain: 9), Band(kind: .peak, freq: 3000, gain: 4, q: 1)]
     let pre = autoPreamp(boosted)

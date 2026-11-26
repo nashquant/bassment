@@ -175,13 +175,6 @@ final class Controller: ObservableObject {
 
     func removeBand(_ id: UUID) { custom.bands.removeAll { $0.id == id } }
 
-    /// Copies the user's own eqMac Advanced EQ presets in (skips names already present).
-    func importEqMacPresets() {
-        let have = Set(settings.presets.map(\.name))
-        let new = eqMacUserPresets().filter { !have.contains($0.name) }
-        settings.presets += new
-        status = new.isEmpty ? "No new eqMac presets" : "Imported \(new.count) eqMac preset(s)"
-    }
 
     // MARK: Apps
 
@@ -284,8 +277,8 @@ final class Controller: ObservableObject {
         }
         analyzer.clear()
         guard settings.enabled else { status = "Off"; return }
-        if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == "com.bitgapp.eqmac" }) {
-            status = "Quit eqMac first: running both loops the audio"
+        if let other = Self.conflictingApp() {
+            status = "Quit \(other.localizedName ?? "the other EQ app") first: two system EQs loop the audio"
             return
         }
         do {
@@ -301,6 +294,13 @@ final class Controller: ObservableObject {
             status = "Error: \(error)"
             NSLog("Bassment: %@", "\(error)")
         }
+    }
+
+    /// System-wide EQ apps that capture the same audio: running both makes a feedback loop (silence).
+    private static let conflictingBundleIDs: Set<String> = ["com.bitgapp.eqmac"]
+
+    private static func conflictingApp() -> NSRunningApplication? {
+        NSWorkspace.shared.runningApplications.first { conflictingBundleIDs.contains($0.bundleIdentifier ?? "") }
     }
 
     private func savePluginStates(from p: Pipeline) {
@@ -330,9 +330,8 @@ final class Controller: ObservableObject {
         }
         guard !rebuilding else { return }
         guard let p = pipeline else {
-            // Retry once the user quits eqMac.
-            if settings.enabled, status.hasPrefix("Quit eqMac"),
-               !NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == "com.bitgapp.eqmac" }) {
+            // Retry once the user quits the other EQ app.
+            if settings.enabled, status.hasPrefix("Quit "), Self.conflictingApp() == nil {
                 rebuild()
             }
             return
