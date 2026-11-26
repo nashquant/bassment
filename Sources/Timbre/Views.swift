@@ -4,79 +4,192 @@ struct TimbreApp: App {
     @StateObject private var c = Controller()
 
     var body: some Scene {
-        MenuBarExtra("Timbre", systemImage: "slider.vertical.3") {
+        Window("Timbre", id: "main") {
             MainView(c: c)
+        }
+        .windowResizability(.contentSize)
+        MenuBarExtra("Timbre", systemImage: "slider.vertical.3") {
+            QuickView(c: c)
         }
         .menuBarExtraStyle(.window)
     }
 }
+
+// MARK: - Shared pieces
+
+struct StyleGrid: View {
+    @ObservedObject var c: Controller
+    var columns = 4
+
+    var body: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: columns), spacing: 6) {
+            ForEach(Genre.all) { g in button(g.name, id: g.id) }
+            ForEach(c.settings.presets) { p in button(p.name, id: "custom:\(p.id.uuidString)") }
+        }
+    }
+
+    private func button(_ name: String, id: String) -> some View {
+        let selected = c.device.style == id
+        return Button { c.selectStyle(id) } label: {
+            Text(name).lineLimit(1).frame(maxWidth: .infinity).padding(.vertical, 4)
+        }
+        .buttonStyle(.bordered)
+        .tint(selected ? .orange : nil)
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.orange : .clear, lineWidth: 2))
+    }
+}
+
+struct BasicEQ: View {
+    @ObservedObject var c: Controller
+
+    var body: some View {
+        VStack(spacing: 4) {
+            row("Graves", $c.device.bass)
+            row("Médios", $c.device.mid)
+            row("Agudos", $c.device.treble)
+        }
+    }
+
+    private func row(_ label: String, _ v: Binding<Float>) -> some View {
+        HStack {
+            Text(label).frame(width: 60, alignment: .leading)
+            Slider(value: v, in: -12...12, step: 0.5)
+            Text(String(format: "%+.1f dB", v.wrappedValue)).monospacedDigit().frame(width: 62, alignment: .trailing)
+        }
+    }
+}
+
+struct Header: View {
+    @ObservedObject var c: Controller
+
+    var body: some View {
+        HStack {
+            Toggle("Ligado", isOn: $c.settings.enabled)
+                .toggleStyle(.switch)
+                .onChange(of: c.settings.enabled) { c.rebuild() }
+            Spacer()
+            Text(c.status).font(.caption).foregroundStyle(c.status == "Ativo" ? Color.secondary : Color.orange)
+        }
+    }
+}
+
+struct OutputRow: View {
+    @ObservedObject var c: Controller
+
+    var body: some View {
+        HStack {
+            Image(systemName: c.device.kind == .headphones ? "headphones" : "hifispeaker")
+            Text(c.outputName).bold().lineLimit(1)
+            Spacer()
+            Picker("", selection: $c.device.kind) {
+                ForEach(OutputKind.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 130)
+        }
+    }
+}
+
+// MARK: - Menu bar
+
+struct QuickView: View {
+    @ObservedObject var c: Controller
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Header(c: c)
+            OutputRow(c: c)
+            StyleGrid(c: c, columns: 3)
+            BasicEQ(c: c)
+            HStack {
+                Button("Abrir janela") {
+                    openWindow(id: "main")
+                    NSApp.activate()
+                }
+                Spacer()
+                Button("Sair") { NSApp.terminate(nil) }
+            }
+        }
+        .padding(12)
+        .frame(width: 340)
+    }
+}
+
+// MARK: - Main window
 
 struct MainView: View {
     @ObservedObject var c: Controller
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                header
-                presetBar
+            VStack(alignment: .leading, spacing: 14) {
+                Header(c: c)
+                OutputRow(c: c)
+                if c.device.kind == .headphones { correction }
+                section("Estilo") { StyleGrid(c: c) }
+                section("Ajuste desta saída") { BasicEQ(c: c) }
                 EQGraph(c: c)
-                bands
-                Divider()
-                room
-                Divider()
-                plugins
-                Divider()
-                apps
-                HStack {
-                    Text("Limitador sempre ligado no fim da cadeia.").font(.caption2).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Sair") { NSApp.terminate(nil) }
-                }
+                Text("O app guarda estilo e ajuste para cada saída. Pré-ganho automático e limitador evitam distorção.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                DisclosureGroup("Editar estilo") { editor.padding(.top, 6) }
+                DisclosureGroup("Volume por app") { apps.padding(.top, 6) }
             }
-            .padding(12)
+            .padding(16)
         }
-        .frame(width: 500, height: 760)
+        .frame(width: 560, height: 760)
     }
 
-    private var header: some View {
+    private func section(_ title: String, @ViewBuilder _ content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.headline)
+            content()
+        }
+    }
+
+    private var correction: some View {
         HStack {
-            Toggle("Timbre", isOn: $c.settings.enabled)
-                .toggleStyle(.switch)
-                .onChange(of: c.settings.enabled) { c.rebuild() }
+            Toggle(isOn: $c.device.correctionOn) {
+                Text(c.device.correction.isEmpty ? "Sem correção para este fone"
+                     : "Correção do fone: \(c.device.correctionSource)")
+            }
+            .disabled(c.device.correction.isEmpty)
             Spacer()
-            VStack(alignment: .trailing) {
-                Text(c.status).font(.caption)
-                Text("Saída: \(c.outputName)").font(.caption).foregroundStyle(.secondary)
-            }
+            Button("Importar AutoEQ…", action: c.importCorrection)
         }
+        .font(.callout)
     }
 
-    private var presetBar: some View {
-        HStack {
-            Picker("Preset", selection: Binding(get: { c.settings.current ?? c.preset.id }, set: c.selectPreset)) {
-                ForEach(c.settings.presets) { Text($0.name).tag($0.id) }
+    @ViewBuilder private var editor: some View {
+        if c.customIndex == nil {
+            HStack {
+                Text("\(c.styleName) é um estilo pronto.").foregroundStyle(.secondary)
+                Button("Criar cópia editável", action: c.customize)
             }
-            .frame(width: 190)
-            TextField("Nome", text: $c.preset.name).frame(width: 110)
-            Menu {
-                Button("Novo", action: c.newPreset)
-                Button("Duplicar", action: c.duplicatePreset)
-                Button("Apagar", action: c.deletePreset).disabled(c.settings.presets.count < 2)
-            } label: { Image(systemName: "ellipsis.circle") }
-                .menuStyle(.borderlessButton).frame(width: 30)
-            Toggle("Desta saída", isOn: Binding(get: { c.isLinked }, set: { _ in c.toggleLink() }))
-                .help("Usar este preset sempre que \(c.outputName) for a saída")
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    TextField("Nome", text: $c.custom.name).frame(width: 200)
+                    Button("Duplicar", action: c.customize)
+                    Button("Apagar", role: .destructive, action: c.deleteCustom)
+                }
+                Text("Arraste os pontos no gráfico, ou edite as bandas:").font(.caption).foregroundStyle(.secondary)
+                bands
+                HStack {
+                    Picker("Sala", selection: $c.custom.room) {
+                        ForEach(Room.allCases) { Text($0.label).tag($0) }
+                    }
+                    .frame(width: 220)
+                    Slider(value: $c.custom.roomMix, in: 0...100).disabled(c.custom.room == .off)
+                    Text("\(Int(c.custom.roomMix))%").monospacedDigit().frame(width: 40)
+                }
+                plugins
+            }
         }
     }
 
     private var bands: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Pré-ganho").frame(width: 70, alignment: .leading)
-                Slider(value: $c.preset.preamp, in: -24...6)
-                Text(String(format: "%+.1f dB", c.preset.preamp)).monospacedDigit().frame(width: 60)
-            }
-            ForEach($c.preset.bands) { $b in
+            ForEach($c.custom.bands) { $b in
                 HStack(spacing: 6) {
                     Toggle("", isOn: $b.on).labelsHidden()
                     Picker("", selection: $b.kind) {
@@ -98,25 +211,13 @@ struct MainView: View {
                 }
             }
             Button("Adicionar banda", systemImage: "plus", action: c.addBand)
-                .disabled(c.preset.bands.count >= maxBands)
-        }
-    }
-
-    private var room: some View {
-        HStack {
-            Picker("Sala", selection: $c.preset.room) {
-                ForEach(Room.allCases) { Text($0.label).tag($0) }
-            }
-            .frame(width: 220)
-            Slider(value: $c.preset.roomMix, in: 0...100).disabled(c.preset.room == .off)
-            Text("\(Int(c.preset.roomMix))%").monospacedDigit().frame(width: 40)
         }
     }
 
     private var plugins: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Plugins (Audio Units)").font(.headline)
-            ForEach($c.preset.plugins) { $p in
+            Text("Plugins (Audio Units)").font(.subheadline).bold()
+            ForEach($c.custom.plugins) { $p in
                 HStack {
                     Toggle("", isOn: $p.on).labelsHidden()
                     Text(p.name)
@@ -137,13 +238,12 @@ struct MainView: View {
 
     private var apps: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Volume por app").font(.headline)
             if c.appRows.isEmpty {
                 Text("Nenhum app tocando agora.").font(.caption).foregroundStyle(.secondary)
             }
             ForEach(c.appRows) { row in
                 HStack {
-                    Text(row.name).lineLimit(1).frame(width: 140, alignment: .leading)
+                    Text(row.name).lineLimit(1).frame(width: 150, alignment: .leading)
                     Slider(value: c.volume(row.bundle), in: 0...1) { editing in
                         if !editing { c.volumeCommitted(row.bundle) }
                     }
@@ -157,6 +257,8 @@ struct MainView: View {
         }
     }
 }
+
+// MARK: - Graph
 
 struct EQGraph: View {
     @ObservedObject var c: Controller
@@ -210,16 +312,18 @@ struct EQGraph: View {
         area.addLine(to: CGPoint(x: s.width, y: s.height))
         ctx.fill(area, with: .color(.cyan.opacity(0.18)))
 
-        // EQ response.
-        let p = c.preset
+        // Final curve, preamp excluded so the shape reads around 0 dB.
+        var shape = c.effective
+        shape.preamp = 0
         var curve = Path()
         for px in stride(from: CGFloat(0), through: s.width, by: 2) {
-            let pt = CGPoint(x: px, y: y(responseDB(p, at: freq(px, s.width), fs: c.sampleRate), s.height))
+            let pt = CGPoint(x: px, y: y(responseDB(shape, at: freq(px, s.width), fs: c.sampleRate), s.height))
             px == 0 ? curve.move(to: pt) : curve.addLine(to: pt)
         }
         ctx.stroke(curve, with: .color(.orange), lineWidth: 2)
 
-        for (i, b) in p.bands.enumerated() {
+        guard c.customIndex != nil else { return }
+        for (i, b) in c.custom.bands.enumerated() {
             let pt = CGPoint(x: x(Double(b.freq), s.width), y: y(b.kind.hasGain ? Double(b.gain) : 0, s.height))
             let r: CGFloat = d.id == b.id ? 8 : 6
             ctx.fill(Path(ellipseIn: CGRect(x: pt.x - r, y: pt.y - r, width: 2 * r, height: 2 * r)),
@@ -229,18 +333,19 @@ struct EQGraph: View {
     }
 
     private func drag(_ loc: CGPoint, _ s: CGSize) {
+        guard c.customIndex != nil else { return }
         if !d.started {
             d.started = true
-            d.id = c.preset.bands.min { dist($0, loc, s) < dist($1, loc, s) }
+            d.id = c.custom.bands.min { dist($0, loc, s) < dist($1, loc, s) }
                 .flatMap { dist($0, loc, s) < 20 ? $0.id : nil }
         }
-        guard let id = d.id, let i = c.preset.bands.firstIndex(where: { $0.id == id }) else { return }
-        var b = c.preset.bands[i]
+        guard let id = d.id, let i = c.custom.bands.firstIndex(where: { $0.id == id }) else { return }
+        var b = c.custom.bands[i]
         b.freq = Float(min(max(freq(loc.x, s.width), 20), 20000)).rounded()
         if b.kind.hasGain {
             b.gain = Float(min(max((s.height / 2 - loc.y) / (s.height / 2) * range, -range), range) * 10).rounded() / 10
         }
-        c.preset.bands[i] = b
+        c.custom.bands[i] = b
     }
 
     private func dist(_ b: Band, _ p: CGPoint, _ s: CGSize) -> CGFloat {

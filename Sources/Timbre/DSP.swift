@@ -157,3 +157,13 @@ final class Analyzer {
         return smooth
     }
 }
+
+/// Negative gain that keeps the curve's highest point at 0 dB, so boosts never clip.
+func autoPreamp(_ bands: [Band]) -> Float {
+    let p = Preset(name: "", bands: bands)
+    var peak = 0.0
+    for i in 0..<120 {
+        peak = max(peak, responseDB(p, at: 20 * pow(1000, Double(i) / 119), fs: 48000))
+    }
+    return Float(-min(peak, 24))
+}

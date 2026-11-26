@@ -45,9 +45,29 @@ func selfTest() -> Bool {
 
     var s = Settings()
     s.appVolumes["com.spotify.client"] = 0.5
-    s.presets[0].plugins = [Plugin(name: "x", type: 1, subType: 2, manufacturer: 3)]
+    s.presets = [Preset(name: "p", plugins: [Plugin(name: "x", type: 1, subType: 2, manufacturer: 3)])]
+    var prof = DeviceProfile(kind: .headphones)
+    prof.bass = 4
+    s.devices["uid"] = prof
     let back = try? JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(s))
-    expect(back?.appVolumes["com.spotify.client"] == 0.5 && back?.presets[0].plugins.first?.subType == 2,
+    expect(back?.appVolumes["com.spotify.client"] == 0.5 && back?.presets[0].plugins.first?.subType == 2
+           && back?.devices["uid"]?.bass == 4 && back?.devices["uid"]?.kind == .headphones,
            "settings ida e volta em JSON")
+    let partial = try? JSONDecoder().decode(Settings.self, from: Data(#"{"appVolumes":{"a":0.3}}"#.utf8))
+    expect(partial?.appVolumes["a"] == 0.3 && partial?.enabled == true, "settings com campos faltando usa padrões")
+
+    let parsed = parseAutoEQ(knownCorrections[0].text)
+    expect(parsed.count == 10 && parsed[0].kind == .lowShelf && parsed[1].freq == 9465 && parsed[1].q == 3.34,
+           "parse do AutoEQ")
+
+    let funk = Genre.find("funk")!
+    let spk = funk.bands(for: .speakers), hp = funk.bands(for: .headphones)
+    expect(hp[0].freq == 70 && spk[0].freq == 90 && spk[0].gain < hp[0].gain, "caixa: grave sobe menos e menos fundo")
+
+    let boosted = [Band(kind: .lowShelf, freq: 90, gain: 9), Band(kind: .peak, freq: 3000, gain: 4, q: 1)]
+    let pre = autoPreamp(boosted)
+    let top = (0..<200).map { responseDB(Preset(name: "", preamp: pre, bands: boosted),
+                                         at: 20 * pow(1000, Double($0) / 199), fs: 48000) }.max()!
+    expect(pre < -8 && top <= 0.05, "pré-ganho automático segura o pico em 0 dB")
     return ok
 }

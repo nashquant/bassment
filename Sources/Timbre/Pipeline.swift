@@ -56,11 +56,16 @@ final class Pipeline {
         }
         let p = Pipeline(presetID: preset.id, outputUID: uid)
         do {
-            try p.createTaps(appVolumes: appVolumes, processes: processes)
-            try p.createAggregate()
+            // HAL calls can block for a long time (the first one waits on the permission prompt): keep them off the UI thread.
+            try await Task.detached {
+                try p.createTaps(appVolumes: appVolumes, processes: processes)
+                try p.createAggregate()
+            }.value
             await p.loadPlugins(preset.plugins)
-            try p.startEngine(preset: preset)
-            try p.startIO(analyzer: analyzer)
+            try await Task.detached {
+                try p.startEngine(preset: preset)
+                try p.startIO(analyzer: analyzer)
+            }.value
         } catch {
             p.stop()
             throw error

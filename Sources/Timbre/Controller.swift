@@ -3,6 +3,7 @@ import AVFoundation
 import CoreAudio
 import CoreAudioKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct AppRow: Identifiable {
     let bundle: String
@@ -46,60 +47,123 @@ final class Controller: ObservableObject {
         outputChanged()
     }
 
-    // MARK: Presets
+    // MARK: Output device profile
 
-    var index: Int { settings.presets.firstIndex { $0.id == settings.current } ?? 0 }
-    var preset: Preset {
-        get { settings.presets[index] }
-        set { settings.presets[index] = newValue }
+    var device: DeviceProfile {
+        get { settings.devices[outputUID] ?? DeviceProfile(kind: .speakers) }
+        set { settings.devices[outputUID] = newValue }
     }
 
-    func selectPreset(_ id: UUID) {
-        guard id != settings.current else { return }
-        let hadPlugins = !preset.plugins.isEmpty
-        settings.current = id
-        if hadPlugins || !preset.plugins.isEmpty { rebuild() }
+    private static func makeProfile(_ id: AudioObjectID, name: String) -> DeviceProfile {
+        var p = DeviceProfile(kind: guessKind(id, name: name))
+        if let k = knownCorrections.first(where: { name.localizedCaseInsensitiveContains($0.match) }) {
+            p.correction = parseAutoEQ(k.text)
+            p.correctionSource = k.source
+        }
+        return p
     }
 
-    func newPreset() {
-        let p = Preset(name: "Novo \(settings.presets.count + 1)")
-        settings.presets.append(p)
-        selectPreset(p.id)
+    /// Bluetooth output with a microphone of the same name = headphones/earbuds; anything else = speakers.
+    private static func guessKind(_ id: AudioObjectID, name: String) -> OutputKind {
+        let transport = CA.prop(id, kAudioDevicePropertyTransportType, UInt32(0)) ?? 0
+        guard transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE else {
+            return .speakers
+        }
+        let hasMic = CA.list(systemObject, kAudioHardwarePropertyDevices).contains {
+            CA.string($0, kAudioObjectPropertyName) == name && !CA.inputLayout($0).isEmpty
+        }
+        return hasMic ? .headphones : .speakers
     }
 
-    func duplicatePreset() {
+    func importCorrection() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.message = "Escolha um arquivo ParametricEQ.txt do AutoEQ"
+        NSApp.activate()
+        guard panel.runModal() == .OK, let url = panel.url,
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        let bands = parseAutoEQ(text)
+        guard !bands.isEmpty else { status = "Arquivo sem filtros AutoEQ"; return }
+        device.correction = bands
+        device.correctionSource = url.deletingPathExtension().lastPathComponent
+        device.correctionOn = true
+    }
+
+    // MARK: Styles
+
+    var customIndex: Int? {
+        guard device.style.hasPrefix("custom:") else { return nil }
+        let id = device.style.dropFirst("custom:".count)
+        return settings.presets.firstIndex { $0.id.uuidString == id }
+    }
+
+    var styleName: String {
+        if let i = customIndex { return settings.presets[i].name }
+        return Genre.find(device.style)?.name ?? "Flat"
+    }
+
+    /// What actually plays: headphone correction + style + Graves/Médios/Agudos, with automatic preamp.
+    var effective: Preset {
+        let d = device
+        var p: Preset
+        if let i = customIndex {
+            p = settings.presets[i]
+        } else {
+            let g = Genre.find(d.style) ?? Genre.all[0]
+            p = Preset(id: Genre.ownerID, name: g.name, bands: g.bands(for: d.kind))
+        }
+        let correction = d.kind == .headphones && d.correctionOn ? d.correction : []
+        p.bands = Array((correction + p.bands.filter(\.on) + d.basicBands).prefix(maxBands))
+        p.preamp += autoPreamp(p.bands)
+        return p
+    }
+
+    func selectStyle(_ id: String) {
+        guard id != device.style else { return }
+        let before = effective.plugins.map(\.id)
+        device.style = id
+        if effective.plugins.map(\.id) != before { rebuild() }
+    }
+
+    /// Copies the current curve into a new editable style.
+    func customize() {
         if let p = pipeline { savePluginStates(from: p) }
-        var p = preset
-        p.id = UUID()
-        p.name += " (cópia)"
+        var p: Preset
+        if let i = customIndex {
+            p = settings.presets[i]
+            p.id = UUID()
+            p.name += " (cópia)"
+        } else {
+            let g = Genre.find(device.style) ?? Genre.all[0]
+            p = Preset(name: "Meu \(g.name)", bands: g.bands(for: device.kind))
+        }
         settings.presets.append(p)
-        selectPreset(p.id)
+        selectStyle("custom:\(p.id.uuidString)")
     }
 
-    func deletePreset() {
-        guard settings.presets.count > 1 else { return }
-        let id = preset.id
-        let hadPlugins = !preset.plugins.isEmpty
-        settings.presets.removeAll { $0.id == id }
-        settings.deviceMap = settings.deviceMap.filter { $0.value != id }
-        settings.current = settings.presets[0].id
-        if hadPlugins || !preset.plugins.isEmpty { rebuild() }
+    func deleteCustom() {
+        guard let i = customIndex else { return }
+        let hadPlugins = !settings.presets[i].plugins.isEmpty
+        let id = "custom:\(settings.presets[i].id.uuidString)"
+        settings.presets.remove(at: i)
+        for (uid, var prof) in settings.devices where prof.style == id {
+            prof.style = "flat"
+            settings.devices[uid] = prof
+        }
+        if hadPlugins { rebuild() }
     }
 
-    var isLinked: Bool { settings.deviceMap[outputUID] == settings.current }
-
-    func toggleLink() {
-        settings.deviceMap[outputUID] = isLinked ? nil : settings.current
+    var custom: Preset {
+        get { customIndex.map { settings.presets[$0] } ?? Preset(name: "") }
+        set { if let i = customIndex { settings.presets[i] = newValue } }
     }
-
-    // MARK: Bands
 
     func addBand() {
-        guard preset.bands.count < maxBands else { return }
-        preset.bands.append(Band())
+        guard custom.bands.count < maxBands - 13 else { return }
+        custom.bands.append(Band())
     }
 
-    func removeBand(_ id: UUID) { preset.bands.removeAll { $0.id == id } }
+    func removeBand(_ id: UUID) { custom.bands.removeAll { $0.id == id } }
 
     // MARK: Apps
 
@@ -127,18 +191,19 @@ final class Controller: ObservableObject {
         rebuild()
     }
 
-    // MARK: Plugins
+    // MARK: Plugins (custom styles only)
 
     func addPlugin(_ c: AVAudioUnitComponent) {
+        guard customIndex != nil else { return }
         let d = c.audioComponentDescription
-        preset.plugins.append(Plugin(name: c.name, type: d.componentType, subType: d.componentSubType,
+        custom.plugins.append(Plugin(name: c.name, type: d.componentType, subType: d.componentSubType,
                                      manufacturer: d.componentManufacturer))
         rebuild()
     }
 
     func removePlugin(_ id: UUID) {
         windows.removeValue(forKey: id)?.close()
-        preset.plugins.removeAll { $0.id == id }
+        custom.plugins.removeAll { $0.id == id }
         rebuild()
     }
 
@@ -149,7 +214,7 @@ final class Controller: ObservableObject {
             return
         }
         guard let unit = pipeline?.plugins.first(where: { $0.id == id })?.unit else { return }
-        let name = preset.plugins.first { $0.id == id }?.name ?? "Plugin"
+        let name = custom.plugins.first { $0.id == id }?.name ?? "Plugin"
         unit.auAudioUnit.requestViewController { vc in
             Task { @MainActor in
                 let controller: NSViewController
@@ -201,8 +266,12 @@ final class Controller: ObservableObject {
         }
         analyzer.clear()
         guard settings.enabled else { status = "Desligado"; return }
+        if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == "com.bitgapp.eqmac" }) {
+            status = "Feche o eqMac: os dois juntos fazem o áudio entrar em loop"
+            return
+        }
         do {
-            let p = try await Pipeline.make(output: CA.defaultOutput, preset: preset, appVolumes: settings.appVolumes,
+            let p = try await Pipeline.make(output: CA.defaultOutput, preset: effective, appVolumes: settings.appVolumes,
                                             processes: processes, analyzer: analyzer)
             pipeline = p
             sampleRate = p.sampleRate
@@ -227,13 +296,11 @@ final class Controller: ObservableObject {
     private func outputChanged() {
         let id = CA.defaultOutput
         let uid = CA.string(id, kAudioDevicePropertyDeviceUID) ?? ""
-        outputName = CA.string(id, kAudioObjectPropertyName) ?? "?"
+        let name = CA.string(id, kAudioObjectPropertyName) ?? "?"
         guard uid != outputUID || pipeline == nil else { return }
+        outputName = name
         outputUID = uid
-        if let mapped = settings.deviceMap[uid], mapped != settings.current,
-           settings.presets.contains(where: { $0.id == mapped }) {
-            settings.current = mapped
-        }
+        if !uid.isEmpty, settings.devices[uid] == nil { settings.devices[uid] = Self.makeProfile(id, name: name) }
         rebuild()
     }
 
@@ -243,8 +310,16 @@ final class Controller: ObservableObject {
             let level = (0..<Analyzer.size).reduce(Float(0)) { max($0, abs(analyzer.ring[$1])) }
             NSLog("Timbre: pico=%.4f", level)
         }
+        guard !rebuilding else { return }
+        guard let p = pipeline else {
+            // Retry once the user quits eqMac.
+            if settings.enabled, status.hasPrefix("Feche o eqMac"),
+               !NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == "com.bitgapp.eqmac" }) {
+                rebuild()
+            }
+            return
+        }
         // An app with a custom volume started playing after the last build: give it its own tap.
-        guard !rebuilding, let p = pipeline else { return }
         if processes.contains(where: { settings.appVolumes[$0.bundle] != nil && !p.tappedProcesses.contains($0.id) }) {
             rebuild()
         }
@@ -252,7 +327,7 @@ final class Controller: ObservableObject {
 
     private func settingsChanged() {
         if let p = pipeline {
-            p.apply(preset)
+            p.apply(effective)
             for (b, v) in settings.appVolumes { p.setGain(bundle: b, v) }
         }
         saveItem?.cancel()

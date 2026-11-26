@@ -1,7 +1,7 @@
 import AVFoundation
 import Foundation
 
-let maxBands = 24
+let maxBands = 32
 
 enum FilterKind: String, Codable, CaseIterable, Identifiable {
     case peak, lowShelf, highShelf, lowPass, highPass, bandPass, notch
@@ -90,6 +90,7 @@ struct Plugin: Codable, Hashable, Identifiable {
     }
 }
 
+/// A user preset ("Meus estilos"). Built-in genres live in Genres.swift.
 struct Preset: Codable, Hashable, Identifiable {
     var id = UUID()
     var name: String
@@ -100,15 +101,61 @@ struct Preset: Codable, Hashable, Identifiable {
     var plugins: [Plugin] = []
 }
 
+enum OutputKind: String, Codable, CaseIterable, Identifiable {
+    case headphones, speakers
+    var id: String { rawValue }
+    var label: String { self == .headphones ? "Fone" : "Caixa" }
+}
+
+/// Everything remembered per output device.
+struct DeviceProfile: Codable {
+    var kind: OutputKind = .speakers
+    var style = "flat"            // genre id, or "custom:<uuid>"
+    var bass: Float = 0
+    var mid: Float = 0
+    var treble: Float = 0
+    var correction: [Band] = []
+    var correctionSource = ""
+    var correctionOn = true
+
+    init(kind: OutputKind) { self.kind = kind }
+
+    /// eqMac-style basic EQ.
+    var basicBands: [Band] {
+        [Band(kind: .lowShelf, freq: 100, gain: bass),
+         Band(kind: .peak, freq: 1000, gain: mid, q: 0.7),
+         Band(kind: .highShelf, freq: 8000, gain: treble)]
+    }
+
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        kind = try c.decodeIfPresent(OutputKind.self, forKey: .kind) ?? .speakers
+        style = try c.decodeIfPresent(String.self, forKey: .style) ?? "flat"
+        bass = try c.decodeIfPresent(Float.self, forKey: .bass) ?? 0
+        mid = try c.decodeIfPresent(Float.self, forKey: .mid) ?? 0
+        treble = try c.decodeIfPresent(Float.self, forKey: .treble) ?? 0
+        correction = try c.decodeIfPresent([Band].self, forKey: .correction) ?? []
+        correctionSource = try c.decodeIfPresent(String.self, forKey: .correctionSource) ?? ""
+        correctionOn = try c.decodeIfPresent(Bool.self, forKey: .correctionOn) ?? true
+    }
+}
+
 struct Settings: Codable {
     var enabled = true
-    var presets: [Preset] = [
-        Preset(name: "Flat"),
-        Preset(name: "Graves", preamp: -6, bands: [Band(kind: .lowShelf, freq: 120, gain: 6)]),
-    ]
-    var current: UUID?
-    var deviceMap: [String: UUID] = [:]   // output device UID → preset
-    var appVolumes: [String: Float] = [:] // bundle ID → gain 0…1
+    var presets: [Preset] = []
+    var devices: [String: DeviceProfile] = [:] // output device UID → profile
+    var appVolumes: [String: Float] = [:]      // bundle ID → gain 0…1
+
+    init() {}
+
+    // Missing keys fall back to defaults, so adding a field never wipes saved settings.
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        presets = (try? c.decodeIfPresent([Preset].self, forKey: .presets)) ?? []
+        devices = (try? c.decodeIfPresent([String: DeviceProfile].self, forKey: .devices)) ?? [:]
+        appVolumes = try c.decodeIfPresent([String: Float].self, forKey: .appVolumes) ?? [:]
+    }
 
     static var url: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -116,10 +163,7 @@ struct Settings: Codable {
     }
 
     static func load() -> Settings {
-        var s = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(Settings.self, from: $0) } ?? Settings()
-        if s.presets.isEmpty { s.presets = Settings().presets }
-        if !s.presets.contains(where: { $0.id == s.current }) { s.current = s.presets[0].id }
-        return s
+        (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(Settings.self, from: $0) } ?? Settings()
     }
 
     func save() throws {
