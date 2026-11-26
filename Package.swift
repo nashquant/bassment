@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "Timbre",
+    name: "Bassment",
     platforms: [.macOS(.v15)],
     targets: [
         .executableTarget(
-            name: "Timbre",
-            path: "Sources/Timbre",
+            name: "Bassment",
+            path: "Sources/Bassment",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]

@@ -28,7 +28,7 @@ final class Controller: ObservableObject {
     private var saveItem: DispatchWorkItem?
     private var windows: [UUID: NSWindow] = [:]
     private var timer: Timer?
-    private let debug = ProcessInfo.processInfo.environment["TIMBRE_DEBUG"] != nil
+    private let debug = ProcessInfo.processInfo.environment["BASSMENT_DEBUG"] != nil
 
     init() {
         settings = Settings.load()
@@ -295,11 +295,11 @@ final class Controller: ObservableObject {
             sampleRate = p.sampleRate
             status = p.failedPlugins.isEmpty ? "Active" : "Failed to load: \(p.failedPlugins.joined(separator: ", "))"
             if debug {
-                NSLog("Timbre: taps=%@ inputs=%@ sr=%.0f", "\(p.tapBundles)", "\(CA.inputLayout(p.aggregate))", p.sampleRate)
+                NSLog("Bassment: taps=%@ inputs=%@ sr=%.0f", "\(p.tapBundles)", "\(CA.inputLayout(p.aggregate))", p.sampleRate)
             }
         } catch {
             status = "Error: \(error)"
-            NSLog("Timbre: %@", "\(error)")
+            NSLog("Bassment: %@", "\(error)")
         }
     }
 
@@ -326,7 +326,7 @@ final class Controller: ObservableObject {
         processes = AppProcess.all()
         if debug {
             let level = (0..<Analyzer.size).reduce(Float(0)) { max($0, abs(analyzer.ring[$1])) }
-            NSLog("Timbre: pico=%.4f", level)
+            NSLog("Bassment: pico=%.4f", level)
         }
         guard !rebuilding else { return }
         guard let p = pipeline else {
@@ -351,7 +351,7 @@ final class Controller: ObservableObject {
         saveItem?.cancel()
         let s = settings
         let item = DispatchWorkItem {
-            do { try s.save() } catch { NSLog("Timbre: save failed: %@", "\(error)") }
+            do { try s.save() } catch { NSLog("Bassment: save failed: %@", "\(error)") }
         }
         saveItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)

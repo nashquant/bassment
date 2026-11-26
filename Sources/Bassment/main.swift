@@ -4,7 +4,7 @@ import Foundation
 if CommandLine.arguments.contains("--selftest") {
     exit(selfTest() ? 0 : 1)
 }
-TimbreApp.main()
+BassmentApp.main()
 
 /// Checks the pure logic: Q conversion, EQ curve math, tap mixing, settings round trip.
 func selfTest() -> Bool {

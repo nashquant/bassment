@@ -155,7 +155,7 @@ struct Settings: Codable {
 
     static var url: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Timbre/settings.json")
+            .appendingPathComponent("Bassment/settings.json")
     }
 
     static func load() -> Settings {

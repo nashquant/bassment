@@ -1,14 +1,14 @@
 import SwiftUI
 
-struct TimbreApp: App {
+struct BassmentApp: App {
     @StateObject private var c = Controller()
 
     var body: some Scene {
-        Window("Timbre", id: "main") {
+        Window("Bassment", id: "main") {
             MainView(c: c)
         }
         .windowResizability(.contentSize)
-        MenuBarExtra("Timbre", systemImage: "slider.vertical.3") {
+        MenuBarExtra("Bassment", systemImage: "slider.vertical.3") {
             QuickView(c: c)
         }
         .menuBarExtraStyle(.window)

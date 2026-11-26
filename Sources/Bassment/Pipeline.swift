@@ -100,7 +100,7 @@ final class Pipeline {
     private func createTaps(appVolumes: [String: Float], processes: [AppProcess]) throws {
         let own = CA.processObject(pid: getpid())
         // Without our own process object the global tap would capture our output: feedback.
-        guard own != 0 else { throw CAError(what: "Timbre process not registered with Core Audio", code: 0) }
+        guard own != 0 else { throw CAError(what: "Bassment process not registered with Core Audio", code: 0) }
         var custom: [String: [AudioObjectID]] = [:]
         for p in processes where appVolumes[p.bundle] != nil { custom[p.bundle, default: []].append(p.id) }
 
@@ -115,9 +115,9 @@ final class Pipeline {
     }
 
     private func addTap(_ d: CATapDescription, bundle: String?, gain: Float) throws {
-        d.name = "Timbre"
+        d.name = "Bassment"
         d.isPrivate = true
-        d.muteBehavior = .mutedWhenTapped // apps sound normal again if Timbre stops reading
+        d.muteBehavior = .mutedWhenTapped // apps sound normal again if Bassment stops reading
         var id = AudioObjectID(0)
         try CA.check(AudioHardwareCreateProcessTap(d, &id), "create tap")
         gains[taps.count] = gain
@@ -128,8 +128,8 @@ final class Pipeline {
 
     private func createAggregate() throws {
         let dict: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "Timbre",
-            kAudioAggregateDeviceUIDKey: "local.timbre.\(UUID().uuidString)",
+            kAudioAggregateDeviceNameKey: "Bassment",
+            kAudioAggregateDeviceUIDKey: "local.bassment.\(UUID().uuidString)",
             kAudioAggregateDeviceMainSubDeviceKey: outputUID,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceIsStackedKey: false,
