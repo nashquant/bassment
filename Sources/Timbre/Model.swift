@@ -49,15 +49,15 @@ enum Room: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .off: "Desligado"
-        case .smallRoom: "Sala pequena"
-        case .mediumRoom: "Sala média"
-        case .largeRoom: "Sala grande"
-        case .mediumChamber: "Câmara"
-        case .mediumHall: "Auditório médio"
-        case .largeHall: "Auditório grande"
+        case .off: "Off"
+        case .smallRoom: "Small room"
+        case .mediumRoom: "Medium room"
+        case .largeRoom: "Large room"
+        case .mediumChamber: "Chamber"
+        case .mediumHall: "Medium hall"
+        case .largeHall: "Large hall"
         case .plate: "Plate"
-        case .cathedral: "Catedral"
+        case .cathedral: "Cathedral"
         }
     }
     var preset: AVAudioUnitReverbPreset? {
@@ -90,7 +90,7 @@ struct Plugin: Codable, Hashable, Identifiable {
     }
 }
 
-/// A user preset ("Meus estilos"). Built-in genres live in Genres.swift.
+/// A user preset. Built-in presets live in Genres.swift.
 struct Preset: Codable, Hashable, Identifiable {
     var id = UUID()
     var name: String
@@ -104,28 +104,22 @@ struct Preset: Codable, Hashable, Identifiable {
 enum OutputKind: String, Codable, CaseIterable, Identifiable {
     case headphones, speakers
     var id: String { rawValue }
-    var label: String { self == .headphones ? "Fone" : "Caixa" }
+    var label: String { self == .headphones ? "Headphones" : "Speakers" }
 }
 
 /// Everything remembered per output device.
 struct DeviceProfile: Codable {
     var kind: OutputKind = .speakers
-    var style = "flat"            // genre id, or "custom:<uuid>"
+    var style = "flat"            // built-in preset id, or "custom:<uuid>"
     var bass: Float = 0
     var mid: Float = 0
     var treble: Float = 0
     var correction: [Band] = []
     var correctionSource = ""
-    var correctionOn = true
+    var correctionOn = false
 
     init(kind: OutputKind) { self.kind = kind }
 
-    /// eqMac-style basic EQ.
-    var basicBands: [Band] {
-        [Band(kind: .lowShelf, freq: 100, gain: bass),
-         Band(kind: .peak, freq: 1000, gain: mid, q: 0.7),
-         Band(kind: .highShelf, freq: 8000, gain: treble)]
-    }
 
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -136,12 +130,13 @@ struct DeviceProfile: Codable {
         treble = try c.decodeIfPresent(Float.self, forKey: .treble) ?? 0
         correction = try c.decodeIfPresent([Band].self, forKey: .correction) ?? []
         correctionSource = try c.decodeIfPresent(String.self, forKey: .correctionSource) ?? ""
-        correctionOn = try c.decodeIfPresent(Bool.self, forKey: .correctionOn) ?? true
+        correctionOn = try c.decodeIfPresent(Bool.self, forKey: .correctionOn) ?? false
     }
 }
 
 struct Settings: Codable {
     var enabled = true
+    var avoidClipping = false             // eqMac default: no gain compensation
     var presets: [Preset] = []
     var devices: [String: DeviceProfile] = [:] // output device UID → profile
     var appVolumes: [String: Float] = [:]      // bundle ID → gain 0…1
@@ -152,6 +147,7 @@ struct Settings: Codable {
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        avoidClipping = try c.decodeIfPresent(Bool.self, forKey: .avoidClipping) ?? false
         presets = (try? c.decodeIfPresent([Preset].self, forKey: .presets)) ?? []
         devices = (try? c.decodeIfPresent([String: DeviceProfile].self, forKey: .devices)) ?? [:]
         appVolumes = try c.decodeIfPresent([String: Float].self, forKey: .appVolumes) ?? [:]

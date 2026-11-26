@@ -1,53 +1,82 @@
 import Foundation
 
-/// Built-in one-click styles. Curves are starting points by ear, not measurements.
+// MARK: - Graphic EQ (same engine as eqMac's Basic/Advanced EQ)
+
+/// eqMac: 10 AVAudioUnitEQ .parametric bands, bandwidth 0.5 octave, no global gain compensation.
+let graphicFreqs: [Float] = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
+let graphicQ: Float = 2.87 // = 0.5 octave
+
+func graphicBands(_ gains: [Float]) -> [Band] {
+    zip(graphicFreqs, gains).map { Band(kind: .peak, freq: $0, gain: $1, q: graphicQ) }
+}
+
+/// Bass/Mid/Treble map onto the 10 bands exactly like eqMac's Basic EQ.
+func basicOffsets(bass: Float, mid: Float, treble: Float) -> [Float] {
+    [bass, bass, bass, mid, mid, mid, mid, treble, treble, treble]
+}
+
+/// Built-in one-click presets.
 struct Genre: Identifiable {
     let id: String
     let name: String
-    let base: [Band]
+    let gains: [Float]
 
-    /// Owner ID for the pipeline when a built-in genre (which has no plugins) is active.
+    /// Owner ID for the pipeline when a built-in preset (which has no plugins) is active.
     static let ownerID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-
-    /// Speakers: a 2.1 soundbar booms around 80–120 Hz in a room, so deep sub boost wastes headroom
-    /// and muddies; distance also dulls the top end.
-    func bands(for kind: OutputKind) -> [Band] {
-        guard kind == .speakers else { return base }
-        return base.map { b in
-            var b = b
-            if b.kind == .lowShelf, b.freq < 90 {
-                b.freq = 90
-                b.gain *= 0.75
-            }
-            if b.kind == .highShelf { b.gain += 1 }
-            return b
-        }
-    }
 
     static func find(_ id: String) -> Genre? { all.first { $0.id == id } }
 
+    // Values from eqMac's ADVANCED_EQUALIZER_DEFAULT_PRESETS (Apache-2.0, see NOTICE),
+    // checked byte-for-byte against the installed eqMac 1.9.2 binary. Blues and Funk are ours.
     static let all: [Genre] = [
-        Genre(id: "flat", name: "Flat", base: []),
-        Genre(id: "bass", name: "Mais graves", base: [ls(90, 6), pk(250, -1, 1)]),
-        Genre(id: "jazz", name: "Jazz", base: [ls(100, 2), pk(400, -1, 1), pk(3000, 1.5, 1), hs(10000, 2)]),
-        Genre(id: "blues", name: "Blues", base: [ls(120, 3), pk(800, 1.5, 0.8), pk(3000, 1, 1), hs(10000, 1)]),
-        Genre(id: "electronic", name: "Eletrônica", base: [ls(60, 6), pk(250, -2, 1), pk(5000, 1, 1), hs(12000, 3)]),
-        Genre(id: "funk", name: "Funk", base: [ls(70, 7), pk(300, -2, 1), pk(2500, 2, 1), hs(10000, 1)]),
-        Genre(id: "hiphop", name: "Hip-hop", base: [ls(60, 6), pk(200, -1, 1), pk(3000, 1.5, 1), hs(10000, 1)]),
-        Genre(id: "rock", name: "Rock", base: [ls(100, 3), pk(500, -1.5, 1), pk(3000, 2.5, 1), hs(10000, 2)]),
-        Genre(id: "pop", name: "Pop", base: [ls(100, 3), pk(2500, 1.5, 1), hs(10000, 2.5)]),
-        Genre(id: "classical", name: "Clássica", base: [ls(100, 1), pk(2000, -1, 0.7), hs(8000, 1.5)]),
-        Genre(id: "voice", name: "Voz", base: [Band(kind: .highPass, freq: 80), pk(250, -2, 1), pk(3000, 3, 1), hs(10000, -1)]),
+        Genre(id: "flat", name: "Flat", gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+        Genre(id: "bassBooster", name: "Bass Booster", gains: [11, 8.5, 7, 5, 2.5, 0, 0, 0, 0, 0]),
+        Genre(id: "acoustic", name: "Acoustic", gains: [-8.3, 9.8, -15.68, 2.1, 18.22, 3.5, 7, 8.2, 7.1, 4.3]),
+        Genre(id: "blues", name: "Blues", gains: [5, 4, 3, 3, 1, 1, 3, 3, 3, 2]),
+        Genre(id: "classic", name: "Classical", gains: [9.5, 7.5, 6, 5, -3, -3, 0, 4.5, 6.5, 7.5]),
+        Genre(id: "dance", name: "Dance", gains: [7.14, 13.1, 9.98, 0, 3.84, 7.3, 10.3, 9.08, 7.18, 0]),
+        Genre(id: "deep", name: "Deep", gains: [9.9, 7.1, 3.5, 2, 5.7, 5, 2.9, -4.3, -7.1, -9.2]),
+        Genre(id: "electronic", name: "Electronic", gains: [8.5, 7.6, 2.4, 0, -4.3, 4.5, 1.7, 2.5, 7.9, 9.6]),
+        Genre(id: "funk", name: "Funk", gains: [10, 9, 6, 2, -2, -1, 2, 3, 2, 1]),
+        Genre(id: "hipHop", name: "Hip-Hop", gains: [10, 8.5, 3, 6, -2, -2, 3, -1, 4, 6]),
+        Genre(id: "jazz", name: "Jazz", gains: [8, 6, 3, 4.5, -3, -3, 0, 3, 6, 7.5]),
+        Genre(id: "latin", name: "Latin", gains: [9, 6, 0, 0, -3, -3, -3, 0, 6, 9]),
+        Genre(id: "loudness", name: "Loudness", gains: [12, 8, 0, 0, -4, 0, -2, -10, 10, 2]),
+        Genre(id: "lounge", name: "Lounge", gains: [-6, -3, -1, 3, 8, 5, 0, -3, 4, 2]),
+        Genre(id: "piano", name: "Piano", gains: [6, 4, 0, 5, 6, 3, 7, 9, 6, 7]),
+        Genre(id: "pop", name: "Pop", gains: [-3, -2, 0, 4, 8, 8, 4, 0, -2, -3]),
+        Genre(id: "rnb", name: "R&B", gains: [5.24, 13.84, 11.3, 2.66, -4.38, -3, 4.64, 5.3, 6, 7.5]),
+        Genre(id: "rock", name: "Rock", gains: [10, 8, 6, 3, -1, -2, 1, 5, 7, 9]),
+        Genre(id: "smallSpeakers", name: "Small Speakers", gains: [11, 8.5, 7, 5, 2.5, 0, -2.5, -5, -7, -8.5]),
+        Genre(id: "spokenWord", name: "Spoken Word", gains: [-6.92, -0.94, 0, 1.38, 6.92, 9.22, 9.68, 8.56, 5.08, 0]),
+        Genre(id: "vocalBooster", name: "Vocal Booster", gains: [-3, -6, -6, 3, 7.5, 7.5, 6, 3, 0, -3]),
+        Genre(id: "trebleBooster", name: "Treble Booster", gains: [0, 0, 0, 0, 0, 2.5, 5, 7, 8.5, 11]),
+        Genre(id: "bassReducer", name: "Bass Reducer", gains: [-11, -8.5, -7, -5, -2.5, 0, 0, 0, 0, 0]),
+        Genre(id: "trebleReducer", name: "Treble Reducer", gains: [0, 0, 0, 0, 0, -2.5, -5, -7, -8.5, -11]),
     ]
 }
 
-private func ls(_ f: Float, _ g: Float) -> Band { Band(kind: .lowShelf, freq: f, gain: g) }
-private func hs(_ f: Float, _ g: Float) -> Band { Band(kind: .highShelf, freq: f, gain: g) }
-private func pk(_ f: Float, _ g: Float, _ q: Float) -> Band { Band(kind: .peak, freq: f, gain: g, q: q) }
+// MARK: - eqMac user presets
+
+/// Reads the user's own Advanced EQ presets from eqMac's preferences.
+func eqMacUserPresets() -> [Preset] {
+    let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences/com.bitgapp.eqmac.plist")
+    guard let plist = NSDictionary(contentsOf: url), let data = plist["advancedEqualizerPresets"] as? Data else { return [] }
+    return parseEqMacPresets(data)
+}
+
+func parseEqMacPresets(_ data: Data) -> [Preset] {
+    struct Gains: Decodable { let global: Float; let bands: [Float] }
+    struct P: Decodable { let name: String; let gains: Gains }
+    let list = (try? JSONDecoder().decode([P].self, from: data)) ?? []
+    return list.filter { $0.gains.bands.count == 10 }.map {
+        Preset(name: $0.name, preamp: $0.gains.global, bands: graphicBands($0.gains.bands))
+    }
+}
 
 // MARK: - Headphone correction (AutoEQ)
 
-/// Parses an AutoEQ "ParametricEQ.txt". The file's own preamp is ignored: Timbre computes one.
+/// Parses an AutoEQ "ParametricEQ.txt". The file's own preamp is ignored.
 func parseAutoEQ(_ text: String) -> [Band] {
     text.split(whereSeparator: \.isNewline).compactMap { line in
         let t = line.split(separator: " ").map(String.init)
@@ -77,7 +106,7 @@ struct KnownCorrection {
     let text: String
 }
 
-/// Applied automatically the first time a matching device shows up.
+/// Offered (off by default) the first time a matching device shows up.
 let knownCorrections = [
     // Product ID 0x201D on this Mac = Powerbeats Pro 2. Source: AutoEq results/DHRME/in-ear.
     KnownCorrection(match: "Powerbeats Pro", source: "AutoEQ · Powerbeats Pro 2 (DHRME)", text: """

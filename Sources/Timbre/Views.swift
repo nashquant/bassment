@@ -44,16 +44,16 @@ struct BasicEQ: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            row("Graves", $c.device.bass)
-            row("Médios", $c.device.mid)
-            row("Agudos", $c.device.treble)
+            row("Bass", $c.device.bass)
+            row("Mid", $c.device.mid)
+            row("Treble", $c.device.treble)
         }
     }
 
     private func row(_ label: String, _ v: Binding<Float>) -> some View {
         HStack {
             Text(label).frame(width: 60, alignment: .leading)
-            Slider(value: v, in: -12...12, step: 0.5)
+            Slider(value: v, in: -24...24, step: 0.5)
             Text(String(format: "%+.1f dB", v.wrappedValue)).monospacedDigit().frame(width: 62, alignment: .trailing)
         }
     }
@@ -64,11 +64,11 @@ struct Header: View {
 
     var body: some View {
         HStack {
-            Toggle("Ligado", isOn: $c.settings.enabled)
+            Toggle("On", isOn: $c.settings.enabled)
                 .toggleStyle(.switch)
                 .onChange(of: c.settings.enabled) { c.rebuild() }
             Spacer()
-            Text(c.status).font(.caption).foregroundStyle(c.status == "Ativo" ? Color.secondary : Color.orange)
+            Text(c.status).font(.caption).foregroundStyle(c.status == "Active" ? Color.secondary : Color.orange)
         }
     }
 }
@@ -102,12 +102,12 @@ struct QuickView: View {
             StyleGrid(c: c, columns: 3)
             BasicEQ(c: c)
             HStack {
-                Button("Abrir janela") {
+                Button("Open window") {
                     openWindow(id: "main")
                     NSApp.activate()
                 }
                 Spacer()
-                Button("Sair") { NSApp.terminate(nil) }
+                Button("Quit") { NSApp.terminate(nil) }
             }
         }
         .padding(12)
@@ -126,13 +126,17 @@ struct MainView: View {
                 Header(c: c)
                 OutputRow(c: c)
                 if c.device.kind == .headphones { correction }
-                section("Estilo") { StyleGrid(c: c) }
-                section("Ajuste desta saída") { BasicEQ(c: c) }
+                section("Preset") { StyleGrid(c: c) }
+                section("Bass · Mid · Treble") {
+                    BasicEQ(c: c)
+                    Toggle("Avoid clipping (lowers volume by the largest boost)", isOn: $c.settings.avoidClipping)
+                        .font(.callout)
+                }
                 EQGraph(c: c)
-                Text("O app guarda estilo e ajuste para cada saída. Pré-ganho automático e limitador evitam distorção.")
+                Text("Preset and sliders are remembered per output. A limiter at the end catches peaks.")
                     .font(.caption2).foregroundStyle(.secondary)
-                DisclosureGroup("Editar estilo") { editor.padding(.top, 6) }
-                DisclosureGroup("Volume por app") { apps.padding(.top, 6) }
+                DisclosureGroup("Edit preset") { editor.padding(.top, 6) }
+                DisclosureGroup("App volume") { apps.padding(.top, 6) }
             }
             .padding(16)
         }
@@ -149,12 +153,12 @@ struct MainView: View {
     private var correction: some View {
         HStack {
             Toggle(isOn: $c.device.correctionOn) {
-                Text(c.device.correction.isEmpty ? "Sem correção para este fone"
-                     : "Correção do fone: \(c.device.correctionSource)")
+                Text(c.device.correction.isEmpty ? "No correction for these headphones"
+                     : "Headphone correction: \(c.device.correctionSource)")
             }
             .disabled(c.device.correction.isEmpty)
             Spacer()
-            Button("Importar AutoEQ…", action: c.importCorrection)
+            Button("Import AutoEQ…", action: c.importCorrection)
         }
         .font(.callout)
     }
@@ -162,20 +166,21 @@ struct MainView: View {
     @ViewBuilder private var editor: some View {
         if c.customIndex == nil {
             HStack {
-                Text("\(c.styleName) é um estilo pronto.").foregroundStyle(.secondary)
-                Button("Criar cópia editável", action: c.customize)
+                Text("\(c.styleName) is built in.").foregroundStyle(.secondary)
+                Button("Make editable copy", action: c.customize)
+                Button("Import eqMac presets", action: c.importEqMacPresets)
             }
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    TextField("Nome", text: $c.custom.name).frame(width: 200)
-                    Button("Duplicar", action: c.customize)
-                    Button("Apagar", role: .destructive, action: c.deleteCustom)
+                    TextField("Name", text: $c.custom.name).frame(width: 200)
+                    Button("Duplicate", action: c.customize)
+                    Button("Delete", role: .destructive, action: c.deleteCustom)
                 }
-                Text("Arraste os pontos no gráfico, ou edite as bandas:").font(.caption).foregroundStyle(.secondary)
+                Text("Drag the points on the graph, or edit the bands:").font(.caption).foregroundStyle(.secondary)
                 bands
                 HStack {
-                    Picker("Sala", selection: $c.custom.room) {
+                    Picker("Room", selection: $c.custom.room) {
                         ForEach(Room.allCases) { Text($0.label).tag($0) }
                     }
                     .frame(width: 220)
@@ -210,7 +215,7 @@ struct MainView: View {
                         .buttonStyle(.borderless)
                 }
             }
-            Button("Adicionar banda", systemImage: "plus", action: c.addBand)
+            Button("Add band", systemImage: "plus", action: c.addBand)
         }
     }
 
@@ -222,12 +227,12 @@ struct MainView: View {
                     Toggle("", isOn: $p.on).labelsHidden()
                     Text(p.name)
                     Spacer()
-                    Button("Abrir") { c.openPlugin(p.id) }
+                    Button("Open") { c.openPlugin(p.id) }
                     Button { c.removePlugin(p.id) } label: { Image(systemName: "minus.circle") }
                         .buttonStyle(.borderless)
                 }
             }
-            Menu("Adicionar plugin") {
+            Menu("Add plugin") {
                 ForEach(c.components, id: \.self) { comp in
                     Button("\(comp.manufacturerName) · \(comp.name)") { c.addPlugin(comp) }
                 }
@@ -239,7 +244,7 @@ struct MainView: View {
     private var apps: some View {
         VStack(alignment: .leading, spacing: 6) {
             if c.appRows.isEmpty {
-                Text("Nenhum app tocando agora.").font(.caption).foregroundStyle(.secondary)
+                Text("No app is playing right now.").font(.caption).foregroundStyle(.secondary)
             }
             ForEach(c.appRows) { row in
                 HStack {
@@ -251,7 +256,7 @@ struct MainView: View {
                     Button { c.resetVolume(row.bundle) } label: { Image(systemName: "arrow.uturn.backward") }
                         .buttonStyle(.borderless)
                         .disabled(c.settings.appVolumes[row.bundle] == nil)
-                        .help("Voltar ao volume normal")
+                        .help("Back to normal volume")
                 }
             }
         }

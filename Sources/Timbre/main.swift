@@ -14,15 +14,21 @@ func selfTest() -> Bool {
         ok = ok && cond
     }
 
-    expect(abs(qToOctaves(1.4142) - 1) < 0.01, "Q 1.414 = 1 oitava")
+    expect(abs(qToOctaves(1.4142) - 1) < 0.01, "Q 1.414 = 1 octave")
+    expect(abs(qToOctaves(graphicQ) - 0.5) < 0.01, "graphic band Q = 0.5 octave (eqMac)")
 
     let flat = Preset(name: "t", bands: [Band(kind: .peak, freq: 1000, gain: 0, q: 1)])
-    expect(abs(responseDB(flat, at: 1000, fs: 48000)) < 1e-6, "peak com 0 dB é plano")
+    expect(abs(responseDB(flat, at: 1000, fs: 48000)) < 1e-6, "0 dB peak is flat")
     let peak = Preset(name: "t", bands: [Band(kind: .peak, freq: 1000, gain: 6, q: 1)])
-    expect(abs(responseDB(peak, at: 1000, fs: 48000) - 6) < 0.01, "peak +6 dB em 1 kHz")
+    expect(abs(responseDB(peak, at: 1000, fs: 48000) - 6) < 0.01, "+6 dB peak at 1 kHz")
     let shelf = Preset(name: "t", preamp: -3, bands: [Band(kind: .lowShelf, freq: 100, gain: 6)])
-    expect(abs(responseDB(shelf, at: 20, fs: 48000) - 3) < 0.3, "low shelf +6 com pré-ganho -3 ≈ +3 dB em 20 Hz")
-    expect(abs(responseDB(shelf, at: 10000, fs: 48000) + 3) < 0.1, "low shelf não mexe em 10 kHz")
+    expect(abs(responseDB(shelf, at: 20, fs: 48000) - 3) < 0.3, "low shelf +6 with -3 preamp = +3 dB at 20 Hz")
+    expect(abs(responseDB(shelf, at: 10000, fs: 48000) + 3) < 0.1, "low shelf leaves 10 kHz alone")
+
+    let boost = Preset(name: "t", bands: graphicBands(Genre.find("bassBooster")!.gains))
+    let at32 = responseDB(boost, at: 32, fs: 48000), at4k = responseDB(boost, at: 4000, fs: 48000)
+    expect(at32 > 10.5 && at32 < 13 && abs(at4k) < 0.5, "Bass Booster: ~+11 dB at 32 Hz, flat at 4 kHz")
+    expect(basicOffsets(bass: 5, mid: 1, treble: -2) == [5, 5, 5, 1, 1, 1, 1, -2, -2, -2], "Bass/Mid/Treble map like eqMac")
 
     // Two stereo taps, interleaved, gains 1 and 0.5.
     let frames = 4
@@ -35,13 +41,13 @@ func selfTest() -> Bool {
     gains[0] = 1; gains[1] = 0.5
     let l = UnsafeMutablePointer<Float>.allocate(capacity: frames), r = UnsafeMutablePointer<Float>.allocate(capacity: frames)
     mixTaps(abl, count: 2, gains: gains, frames: frames, l: l, r: r)
-    expect((0..<frames).allSatisfy { l[$0] == 3 && r[$0] == 4 }, "mixTaps soma taps com ganho")
+    expect((0..<frames).allSatisfy { l[$0] == 3 && r[$0] == 4 }, "mixTaps sums taps with gain")
 
     let out = UnsafeMutablePointer<Float>.allocate(capacity: 8)
     let outABL = AudioBufferList.allocate(maximumBuffers: 1)
     outABL[0] = AudioBuffer(mNumberChannels: 2, mDataByteSize: 32, mData: out)
     writeOutput(outABL, l: l, r: r, frames: frames)
-    expect(out[0] == 3 && out[1] == 4 && out[6] == 3 && out[7] == 4, "writeOutput intercala L/R")
+    expect(out[0] == 3 && out[1] == 4 && out[6] == 3 && out[7] == 4, "writeOutput interleaves L/R")
 
     var s = Settings()
     s.appVolumes["com.spotify.client"] = 0.5
@@ -52,22 +58,23 @@ func selfTest() -> Bool {
     let back = try? JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(s))
     expect(back?.appVolumes["com.spotify.client"] == 0.5 && back?.presets[0].plugins.first?.subType == 2
            && back?.devices["uid"]?.bass == 4 && back?.devices["uid"]?.kind == .headphones,
-           "settings ida e volta em JSON")
+           "settings JSON round trip")
     let partial = try? JSONDecoder().decode(Settings.self, from: Data(#"{"appVolumes":{"a":0.3}}"#.utf8))
-    expect(partial?.appVolumes["a"] == 0.3 && partial?.enabled == true, "settings com campos faltando usa padrões")
+    expect(partial?.appVolumes["a"] == 0.3 && partial?.enabled == true && partial?.avoidClipping == false,
+           "missing settings fields fall back to defaults")
 
     let parsed = parseAutoEQ(knownCorrections[0].text)
     expect(parsed.count == 10 && parsed[0].kind == .lowShelf && parsed[1].freq == 9465 && parsed[1].q == 3.34,
-           "parse do AutoEQ")
+           "AutoEQ parse")
 
-    let funk = Genre.find("funk")!
-    let spk = funk.bands(for: .speakers), hp = funk.bands(for: .headphones)
-    expect(hp[0].freq == 70 && spk[0].freq == 90 && spk[0].gain < hp[0].gain, "caixa: grave sobe menos e menos fundo")
+    let eqm = parseEqMacPresets(Data(#"[{"id":"x","isDefault":false,"name":"Electro","gains":{"global":0,"bands":[4,4,2,0,-1,-1,0,1,2,2]}}]"#.utf8))
+    expect(eqm.count == 1 && eqm[0].name == "Electro" && eqm[0].bands[0].gain == 4 && eqm[0].bands[9].freq == 16000,
+           "eqMac preset import")
 
     let boosted = [Band(kind: .lowShelf, freq: 90, gain: 9), Band(kind: .peak, freq: 3000, gain: 4, q: 1)]
     let pre = autoPreamp(boosted)
     let top = (0..<200).map { responseDB(Preset(name: "", preamp: pre, bands: boosted),
                                          at: 20 * pow(1000, Double($0) / 199), fs: 48000) }.max()!
-    expect(pre < -8 && top <= 0.05, "pré-ganho automático segura o pico em 0 dB")
+    expect(pre < -8 && top <= 0.05, "avoid clipping keeps the peak at 0 dB")
     return ok
 }

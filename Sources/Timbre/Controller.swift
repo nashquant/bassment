@@ -17,7 +17,7 @@ final class Controller: ObservableObject {
     @Published private(set) var outputName = "—"
     @Published private(set) var outputUID = ""
     @Published private(set) var processes: [AppProcess] = []
-    @Published private(set) var status = "Iniciando"
+    @Published private(set) var status = "Starting"
     @Published private(set) var sampleRate: Double = 48000
 
     let analyzer = Analyzer()
@@ -78,12 +78,12 @@ final class Controller: ObservableObject {
     func importCorrection() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.plainText]
-        panel.message = "Escolha um arquivo ParametricEQ.txt do AutoEQ"
+        panel.message = "Choose an AutoEQ ParametricEQ.txt file"
         NSApp.activate()
         guard panel.runModal() == .OK, let url = panel.url,
               let text = try? String(contentsOf: url, encoding: .utf8) else { return }
         let bands = parseAutoEQ(text)
-        guard !bands.isEmpty else { status = "Arquivo sem filtros AutoEQ"; return }
+        guard !bands.isEmpty else { status = "No AutoEQ filters in that file"; return }
         device.correction = bands
         device.correctionSource = url.deletingPathExtension().lastPathComponent
         device.correctionOn = true
@@ -102,19 +102,23 @@ final class Controller: ObservableObject {
         return Genre.find(device.style)?.name ?? "Flat"
     }
 
-    /// What actually plays: headphone correction + style + Graves/Médios/Agudos, with automatic preamp.
+    /// What actually plays: headphone correction + 10-band graphic EQ (preset + Bass/Mid/Treble) + custom bands.
     var effective: Preset {
         let d = device
         var p: Preset
+        var gains = [Float](repeating: 0, count: 10)
         if let i = customIndex {
             p = settings.presets[i]
         } else {
             let g = Genre.find(d.style) ?? Genre.all[0]
-            p = Preset(id: Genre.ownerID, name: g.name, bands: g.bands(for: d.kind))
+            p = Preset(id: Genre.ownerID, name: g.name)
+            gains = g.gains
         }
+        let offsets = basicOffsets(bass: d.bass, mid: d.mid, treble: d.treble)
+        gains = zip(gains, offsets).map { $0 + $1 }
         let correction = d.kind == .headphones && d.correctionOn ? d.correction : []
-        p.bands = Array((correction + p.bands.filter(\.on) + d.basicBands).prefix(maxBands))
-        p.preamp += autoPreamp(p.bands)
+        p.bands = Array((correction + graphicBands(gains) + p.bands.filter(\.on)).prefix(maxBands))
+        if settings.avoidClipping { p.preamp += autoPreamp(p.bands) }
         return p
     }
 
@@ -132,10 +136,10 @@ final class Controller: ObservableObject {
         if let i = customIndex {
             p = settings.presets[i]
             p.id = UUID()
-            p.name += " (cópia)"
+            p.name += " copy"
         } else {
             let g = Genre.find(device.style) ?? Genre.all[0]
-            p = Preset(name: "Meu \(g.name)", bands: g.bands(for: device.kind))
+            p = Preset(name: "My \(g.name)", bands: graphicBands(g.gains))
         }
         settings.presets.append(p)
         selectStyle("custom:\(p.id.uuidString)")
@@ -159,11 +163,19 @@ final class Controller: ObservableObject {
     }
 
     func addBand() {
-        guard custom.bands.count < maxBands - 13 else { return }
+        guard custom.bands.count < maxBands - 20 else { return }
         custom.bands.append(Band())
     }
 
     func removeBand(_ id: UUID) { custom.bands.removeAll { $0.id == id } }
+
+    /// Copies the user's own eqMac Advanced EQ presets in (skips names already present).
+    func importEqMacPresets() {
+        let have = Set(settings.presets.map(\.name))
+        let new = eqMacUserPresets().filter { !have.contains($0.name) }
+        settings.presets += new
+        status = new.isEmpty ? "No new eqMac presets" : "Imported \(new.count) eqMac preset(s)"
+    }
 
     // MARK: Apps
 
@@ -265,9 +277,9 @@ final class Controller: ObservableObject {
             pipeline = nil
         }
         analyzer.clear()
-        guard settings.enabled else { status = "Desligado"; return }
+        guard settings.enabled else { status = "Off"; return }
         if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == "com.bitgapp.eqmac" }) {
-            status = "Feche o eqMac: os dois juntos fazem o áudio entrar em loop"
+            status = "Quit eqMac first: running both loops the audio"
             return
         }
         do {
@@ -275,12 +287,12 @@ final class Controller: ObservableObject {
                                             processes: processes, analyzer: analyzer)
             pipeline = p
             sampleRate = p.sampleRate
-            status = p.failedPlugins.isEmpty ? "Ativo" : "Falhou: \(p.failedPlugins.joined(separator: ", "))"
+            status = p.failedPlugins.isEmpty ? "Active" : "Failed to load: \(p.failedPlugins.joined(separator: ", "))"
             if debug {
                 NSLog("Timbre: taps=%@ inputs=%@ sr=%.0f", "\(p.tapBundles)", "\(CA.inputLayout(p.aggregate))", p.sampleRate)
             }
         } catch {
-            status = "Erro: \(error)"
+            status = "Error: \(error)"
             NSLog("Timbre: %@", "\(error)")
         }
     }
@@ -313,7 +325,7 @@ final class Controller: ObservableObject {
         guard !rebuilding else { return }
         guard let p = pipeline else {
             // Retry once the user quits eqMac.
-            if settings.enabled, status.hasPrefix("Feche o eqMac"),
+            if settings.enabled, status.hasPrefix("Quit eqMac"),
                !NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == "com.bitgapp.eqmac" }) {
                 rebuild()
             }
@@ -333,7 +345,7 @@ final class Controller: ObservableObject {
         saveItem?.cancel()
         let s = settings
         let item = DispatchWorkItem {
-            do { try s.save() } catch { NSLog("Timbre: salvar falhou: %@", "\(error)") }
+            do { try s.save() } catch { NSLog("Timbre: save failed: %@", "\(error)") }
         }
         saveItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)

@@ -1,0 +1,9 @@
+Timbre includes preset values and the 10-band graphic EQ layout (band frequencies,
+0.5-octave bandwidth, Bass/Mid/Treble band mapping) from eqMac.
+
+eqMac — https://github.com/bitgapp/eqMac
+Copyright © Roman Kisil (bitgapp)
+Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
+
+The headphone correction for Powerbeats Pro 2 comes from AutoEq
+(https://github.com/jaakkopasanen/AutoEq, results/DHRME), MIT License.

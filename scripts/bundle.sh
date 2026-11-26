@@ -18,7 +18,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
-  <key>NSAudioCaptureUsageDescription</key><string>O Timbre captura o áudio do sistema para aplicar EQ e efeitos.</string>
+  <key>NSAudioCaptureUsageDescription</key><string>Timbre captures system audio to apply EQ and effects.</string>
 </dict></plist>
 PLIST
 codesign --force --sign - "$APP"

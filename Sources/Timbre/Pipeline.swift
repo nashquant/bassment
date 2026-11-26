@@ -52,7 +52,7 @@ final class Pipeline {
     static func make(output: AudioObjectID, preset: Preset, appVolumes: [String: Float],
                      processes: [AppProcess], analyzer: Analyzer) async throws -> Pipeline {
         guard let uid = CA.string(output, kAudioDevicePropertyDeviceUID) else {
-            throw CAError(what: "saída padrão não encontrada", code: 0)
+            throw CAError(what: "default output not found", code: 0)
         }
         let p = Pipeline(presetID: preset.id, outputUID: uid)
         do {
@@ -100,7 +100,7 @@ final class Pipeline {
     private func createTaps(appVolumes: [String: Float], processes: [AppProcess]) throws {
         let own = CA.processObject(pid: getpid())
         // Without our own process object the global tap would capture our output: feedback.
-        guard own != 0 else { throw CAError(what: "processo do Timbre não registrado no Core Audio", code: 0) }
+        guard own != 0 else { throw CAError(what: "Timbre process not registered with Core Audio", code: 0) }
         var custom: [String: [AudioObjectID]] = [:]
         for p in processes where appVolumes[p.bundle] != nil { custom[p.bundle, default: []].append(p.id) }
 
@@ -119,7 +119,7 @@ final class Pipeline {
         d.isPrivate = true
         d.muteBehavior = .mutedWhenTapped // apps sound normal again if Timbre stops reading
         var id = AudioObjectID(0)
-        try CA.check(AudioHardwareCreateProcessTap(d, &id), "criar tap")
+        try CA.check(AudioHardwareCreateProcessTap(d, &id), "create tap")
         gains[taps.count] = gain
         taps.append(id)
         tapBundles.append(bundle)
@@ -139,7 +139,7 @@ final class Pipeline {
                 [kAudioSubTapUIDKey: $0, kAudioSubTapDriftCompensationKey: true] as [String: Any]
             },
         ]
-        try CA.check(AudioHardwareCreateAggregateDevice(dict as CFDictionary, &aggregate), "criar aggregate device")
+        try CA.check(AudioHardwareCreateAggregateDevice(dict as CFDictionary, &aggregate), "create aggregate device")
         let sr = CA.prop(aggregate, kAudioDevicePropertyNominalSampleRate, Float64(0)) ?? 0
         if sr > 0 { sampleRate = sr }
     }
@@ -162,12 +162,12 @@ final class Pipeline {
 
     private func startEngine(preset: Preset) throws {
         guard let fmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2) else {
-            throw CAError(what: "formato de áudio", code: 0)
+            throw CAError(what: "audio format", code: 0)
         }
         try engine.enableManualRenderingMode(.realtime, format: fmt, maximumFrameCount: AVAudioFrameCount(Self.maxFrames))
         let inPtr = UnsafePointer(inBuf.unsafePointer)
         guard engine.inputNode.setManualRenderingInputPCMFormat(fmt, inputBlock: { _ in inPtr }) else {
-            throw CAError(what: "entrada do engine", code: 0)
+            throw CAError(what: "engine input", code: 0)
         }
         let chain: [AVAudioNode] = [eq] + plugins.map(\.unit) + [reverb, limiter]
         var prev: AVAudioNode = engine.inputNode
@@ -209,8 +209,8 @@ final class Pipeline {
             let r = ok ? UnsafePointer(outB[1].mData!.assumingMemoryBound(to: Float.self)) : UnsafePointer(R)
             writeOutput(outs, l: l, r: r, frames: frames)
             Analyzer.write(ring: ring, head: head, l: l, r: r, frames: frames)
-        }, "criar IOProc")
-        try CA.check(AudioDeviceStart(aggregate, procID), "iniciar áudio")
+        }, "create IOProc")
+        try CA.check(AudioDeviceStart(aggregate, procID), "start audio")
     }
 
     // MARK: Live
