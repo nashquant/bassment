@@ -30,12 +30,20 @@ struct StyleGrid: View {
 
     private func button(_ name: String, id: String) -> some View {
         let selected = c.settings.style == id
+        let favorite = c.settings.favorites.contains(id)
         return Button { c.selectStyle(id) } label: {
-            Text(name).lineLimit(1).frame(maxWidth: .infinity).padding(.vertical, 4)
+            HStack(spacing: 3) {
+                if favorite { Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(.yellow) }
+                Text(name).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity).padding(.vertical, 4)
         }
         .buttonStyle(.bordered)
         .tint(selected ? .orange : nil)
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.orange : .clear, lineWidth: 2))
+        .contextMenu {
+            Button(favorite ? "Remove from Favorites" : "Add to Favorites") { c.toggleFavorite(id) }
+        }
     }
 }
 
@@ -103,10 +111,32 @@ struct QuickView: View {
         VStack(alignment: .leading, spacing: 10) {
             Header(c: c)
             OutputRow(c: c)
-            StyleGrid(c: c, columns: 3)
-            BasicEQ(c: c)
+            Divider()
+            VStack(spacing: 2) {
+                ForEach(c.favorites, id: \.self) { id in
+                    let selected = c.settings.style == id
+                    Button { c.selectStyle(id) } label: {
+                        HStack {
+                            Text(c.name(of: id))
+                            Spacer()
+                            if selected { Image(systemName: "checkmark").foregroundStyle(.orange) }
+                        }
+                        .contentShape(Rectangle())
+                        .padding(.vertical, 5).padding(.horizontal, 8)
+                        .background(selected ? Color.orange.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                    }
+                    .buttonStyle(.plain)
+                }
+                if c.favorites.isEmpty {
+                    Text("Right-click a preset in the app to add it here.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if !c.favorites.contains(c.settings.style) {
+                Text("Now: \(c.styleName)").font(.caption).foregroundStyle(.secondary)
+            }
+            Divider()
             HStack {
-                Button("Open window") {
+                Button("Open Bassment") {
                     openWindow(id: "main")
                     NSApp.activate()
                 }
@@ -115,7 +145,7 @@ struct QuickView: View {
             }
         }
         .padding(12)
-        .frame(width: 340)
+        .frame(width: 280)
     }
 }
 
@@ -137,7 +167,7 @@ struct MainView: View {
                         .font(.callout)
                 }
                 EQGraph(c: c)
-                Text("Preset and sliders apply to every output. Each device gets its own correction automatically. A limiter at the end catches peaks.")
+                Text("Preset and sliders apply to every output. Each device gets its own correction automatically. Right-click a preset to add it to the menu bar favorites.")
                     .font(.caption2).foregroundStyle(.secondary)
                 DisclosureGroup("Device correction") { correction.padding(.top, 6) }
                 DisclosureGroup("Edit preset") { editor.padding(.top, 6) }

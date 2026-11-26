@@ -64,7 +64,8 @@ func selfTest() -> Bool {
            "settings JSON round trip")
     let partial = try? JSONDecoder().decode(Settings.self, from: Data(#"{"appVolumes":{"a":0.3}}"#.utf8))
     expect(partial?.appVolumes["a"] == 0.3 && partial?.enabled == true && partial?.avoidClipping == false
-           && partial?.style == "flat",
+           && partial?.style == "flat" && partial?.favorites == ["bassBooster", "dance", "rock", "rnb", "vocalBooster"]
+           && partial!.favorites.allSatisfy { Genre.find($0) != nil },
            "missing settings fields fall back to defaults")
 
     let parsed = parseAutoEQ(knownCorrections[0].text)

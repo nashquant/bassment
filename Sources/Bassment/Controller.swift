@@ -106,9 +106,24 @@ final class Controller: ObservableObject {
         return settings.presets.firstIndex { $0.id.uuidString == id }
     }
 
-    var styleName: String {
-        if let i = customIndex { return settings.presets[i].name }
-        return Genre.find(settings.style)?.name ?? "Flat"
+    var styleName: String { name(of: settings.style) }
+
+    func name(of id: String) -> String {
+        if id.hasPrefix("custom:") {
+            return settings.presets.first { "custom:\($0.id.uuidString)" == id }?.name ?? "?"
+        }
+        return Genre.find(id)?.name ?? "?"
+    }
+
+    /// Favorites that still exist (a deleted custom preset drops out).
+    var favorites: [String] { settings.favorites.filter { name(of: $0) != "?" } }
+
+    func toggleFavorite(_ id: String) {
+        if let i = settings.favorites.firstIndex(of: id) {
+            settings.favorites.remove(at: i)
+        } else {
+            settings.favorites.append(id)
+        }
     }
 
     /// What actually plays: headphone correction + 10-band graphic EQ (preset + Bass/Mid/Treble) + custom bands.
