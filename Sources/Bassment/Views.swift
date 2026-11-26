@@ -101,6 +101,22 @@ struct OutputRow: View {
     }
 }
 
+struct AutoToggle: View {
+    @ObservedObject var c: Controller
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle("Auto", isOn: $c.settings.auto)
+                .onChange(of: c.settings.auto) { c.autoToggled() }
+                .help("Adjusts bass and treble per track toward the balance you usually listen to")
+            Text(c.settings.auto
+                 ? String(format: "Bass %+.1f dB · Treble %+.1f dB", c.auto.bass, c.auto.treble)
+                 : "Balances each track automatically")
+                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+        }
+    }
+}
+
 // MARK: - Menu bar
 
 struct QuickView: View {
@@ -135,6 +151,8 @@ struct QuickView: View {
                 Text("Now: \(c.styleName)").font(.caption).foregroundStyle(.secondary)
             }
             Divider()
+            AutoToggle(c: c)
+            Divider()
             HStack {
                 Button("Open Bassment") {
                     openWindow(id: "main")
@@ -165,6 +183,7 @@ struct MainView: View {
                     BasicEQ(c: c)
                     Toggle("Avoid clipping (lowers volume by the largest boost)", isOn: $c.settings.avoidClipping)
                         .font(.callout)
+                    AutoToggle(c: c)
                 }
                 EQGraph(c: c)
                 Text("Preset and sliders apply to every output. Each device gets its own correction automatically. Right-click a preset to add it to the menu bar favorites.")

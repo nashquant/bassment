@@ -94,11 +94,14 @@ func writeOutput(_ outs: UnsafeMutableAudioBufferListPointer, l: UnsafePointer<F
 // MARK: - Spectrum analyzer
 
 final class Analyzer {
-    static let size = 4096
+    static let size = 16384        // ring: ~370 ms at 44.1 kHz, used whole for auto mode's balance
+    static let displaySize = 4096  // the graph uses the latest ~93 ms
     let ring = UnsafeMutablePointer<Float>.allocate(capacity: size)
     let head = UnsafeMutablePointer<Int>.allocate(capacity: 1)
-    private let fft = vDSP.FFT(log2n: 12, radix: .radix2, ofType: DSPSplitComplex.self)!
-    private let window = vDSP.window(ofType: Float.self, usingSequence: .hanningDenormalized, count: size, isHalfWindow: false)
+    private let ffts = [4096: vDSP.FFT(log2n: 12, radix: .radix2, ofType: DSPSplitComplex.self)!,
+                        16384: vDSP.FFT(log2n: 14, radix: .radix2, ofType: DSPSplitComplex.self)!]
+    private let windows = [4096: vDSP.window(ofType: Float.self, usingSequence: .hanningDenormalized, count: 4096, isHalfWindow: false),
+                           16384: vDSP.window(ofType: Float.self, usingSequence: .hanningDenormalized, count: 16384, isHalfWindow: false)]
     private var smooth: [Float] = []
 
     init() {
@@ -119,13 +122,12 @@ final class Analyzer {
 
     func clear() { ring.update(repeating: 0, count: Self.size) }
 
-    /// dBFS (approx.) at `points` log-spaced frequencies from 20 Hz to 20 kHz.
-    func spectrum(points: Int, fs: Double) -> [Float] {
-        let n = Self.size
+    /// Squared FFT magnitudes (n/2 bins) of the latest `n` samples (4096 or 16384), Hann-windowed.
+    private func magnitudes(_ n: Int) -> [Float] {
         let h = head.pointee
         var x = [Float](repeating: 0, count: n)
-        for i in 0..<n { x[i] = ring[(h + i) & (n - 1)] }
-        vDSP.multiply(x, window, result: &x)
+        for i in 0..<n { x[i] = ring[(h - n + i + Self.size) & (Self.size - 1)] }
+        vDSP.multiply(x, windows[n]!, result: &x)
         var re = [Float](repeating: 0, count: n / 2)
         var im = [Float](repeating: 0, count: n / 2)
         var mags = [Float](repeating: 0, count: n / 2)
@@ -137,10 +139,33 @@ final class Analyzer {
                         vDSP_ctoz($0, 2, &split, 1, vDSP_Length(n / 2))
                     }
                 }
-                fft.forward(input: split, output: &split)
+                ffts[n]!.forward(input: split, output: &split)
                 vDSP_zvmags(&split, 1, &mags, 1, vDSP_Length(n / 2))
             }
         }
+        return mags
+    }
+
+    /// Low (30–150 Hz) and high (2–12 kHz) energy relative to mid (150 Hz–2 kHz), in dB,
+    /// plus overall level in dBFS. Nil when the signal is near silence.
+    func balance(fs: Double) -> (low: Float, high: Float)? {
+        let mags = magnitudes(Self.size)
+        let n = Double(Self.size)
+        func band(_ f0: Double, _ f1: Double) -> Float {
+            let b0 = max(1, Int(f0 / fs * n)), b1 = min(mags.count - 1, Int(f1 / fs * n))
+            return b0 <= b1 ? mags[b0...b1].reduce(0, +) : 0
+        }
+        let low = band(30, 150), mid = band(150, 2000), high = band(2000, 12000)
+        let total = low + mid + high
+        // Below roughly -50 dBFS there is no music to judge (pause, silence, fade).
+        guard total > 1e-5 * Float(n * n) / 4, mid > 0 else { return nil }
+        return (10 * log10(max(low, 1e-12) / mid), 10 * log10(max(high, 1e-12) / mid))
+    }
+
+    /// dBFS (approx.) at `points` log-spaced frequencies from 20 Hz to 20 kHz.
+    func spectrum(points: Int, fs: Double) -> [Float] {
+        let n = Self.displaySize
+        let mags = magnitudes(n)
         let ref = 20 * log10(Float(n) / 2)
         var out = [Float](repeating: -120, count: points)
         for p in 0..<points {
@@ -166,4 +191,39 @@ func autoPreamp(_ bands: [Band]) -> Float {
         peak = max(peak, responseDB(p, at: 20 * pow(1000, Double(i) / 119), fs: 48000))
     }
     return Float(-min(peak, 24))
+}
+
+// MARK: - Auto mode
+
+/// Pulls each track toward the listener's own average tonal balance.
+/// `short` follows the current track (~8 s), `reference` learns what the user usually plays (~20 min).
+struct AutoEQ: Codable {
+    var short: [Float]?       // [low, high] relative to mid, dB
+    var reference: [Float]?
+    var samples = 0           // readings behind `reference`
+    var bass: Float = 0       // offsets added to the Bass / Treble sliders
+    var treble: Float = 0
+
+    static let limit: Float = 6     // dB, either way
+    static let slew: Float = 0.5    // dB per second
+    static let strength: Float = 0.7
+
+    mutating func update(low: Float, high: Float, dt: Float) {
+        let x = [low, high]
+        samples += 1
+        let s = short.map { zip($0, x).map { $0 + ($1 - $0) * min(1, dt / 12) } } ?? x
+        // Plain mean of everything heard until it spans ~20 min, then a moving average.
+        let a = max(dt / 1200, 1 / Float(samples))
+        let r = reference.map { zip($0, x).map { $0 + ($1 - $0) * a } } ?? x
+        short = s
+        reference = r
+        let learned = Float(samples) * dt >= 60 // judge nothing before a minute of music
+        func step(_ current: Float, _ dev: Float) -> Float {
+            let target = learned ? min(max(-dev * Self.strength, -Self.limit), Self.limit) : 0
+            let maxStep = Self.slew * dt
+            return current + min(max(target - current, -maxStep), maxStep)
+        }
+        bass = step(bass, s[0] - r[0])
+        treble = step(treble, s[1] - r[1])
+    }
 }

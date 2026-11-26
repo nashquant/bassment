@@ -78,5 +78,16 @@ func selfTest() -> Bool {
     let top = (0..<200).map { responseDB(Preset(name: "", preamp: pre, bands: boosted),
                                          at: 20 * pow(1000, Double($0) / 199), fs: 48000) }.max()!
     expect(pre < -8 && top <= 0.05, "avoid clipping keeps the peak at 0 dB")
+    var steady = AutoEQ()
+    for _ in 0..<100 { steady.update(low: -3, high: -12, dt: 2) }
+    expect(steady.bass == 0 && steady.treble == 0, "auto: a track like the usual leaves EQ alone")
+    var boomy = steady
+    for _ in 0..<5 { boomy.update(low: 3, high: -12, dt: 2) }
+    expect(boomy.bass < 0 && boomy.bass >= -5 && boomy.treble == 0, "auto: bass-heavy track gets less bass, slowly")
+    var fresh = AutoEQ()
+    for i in 0..<29 { fresh.update(low: i % 2 == 0 ? 6 : -6, high: -12, dt: 2) }
+    expect(fresh.bass == 0 && abs(fresh.reference![0]) < 0.5, "auto: no correction in the first minute; reference is the mean")
+    for _ in 0..<60 { boomy.update(low: 9, high: -12, dt: 2) }
+    expect(boomy.bass >= -AutoEQ.limit - 0.001 && boomy.bass < -4, "auto: correction capped at the limit")
     return ok
 }

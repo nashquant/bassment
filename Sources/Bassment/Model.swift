@@ -131,6 +131,9 @@ struct Settings: Codable {
     var avoidClipping = false             // off: boosts are not compensated
     var style = "flat"                    // built-in preset id, or "custom:<uuid>"
     var favorites = ["bassBooster", "dance", "rock", "rnb", "vocalBooster"] // shown in the menu bar
+    var auto = false
+    var autoReference: [Float]?           // learned average balance, see AutoEQ
+    var autoSamples = 0
     var bass: Float = 0
     var mid: Float = 0
     var treble: Float = 0
@@ -147,6 +150,9 @@ struct Settings: Codable {
         avoidClipping = try c.decodeIfPresent(Bool.self, forKey: .avoidClipping) ?? false
         style = try c.decodeIfPresent(String.self, forKey: .style) ?? "flat"
         favorites = try c.decodeIfPresent([String].self, forKey: .favorites) ?? Settings().favorites
+        auto = try c.decodeIfPresent(Bool.self, forKey: .auto) ?? false
+        autoReference = try c.decodeIfPresent([Float].self, forKey: .autoReference)
+        autoSamples = try c.decodeIfPresent(Int.self, forKey: .autoSamples) ?? 0
         bass = try c.decodeIfPresent(Float.self, forKey: .bass) ?? 0
         mid = try c.decodeIfPresent(Float.self, forKey: .mid) ?? 0
         treble = try c.decodeIfPresent(Float.self, forKey: .treble) ?? 0

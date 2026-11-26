@@ -19,6 +19,8 @@ final class Controller: ObservableObject {
     @Published private(set) var processes: [AppProcess] = []
     @Published private(set) var status = "Starting"
     @Published private(set) var sampleRate: Double = 48000
+    @Published private(set) var auto = AutoEQ()
+    private var ticks = 0
 
     let analyzer = Analyzer()
     let components: [AVAudioUnitComponent]
@@ -36,6 +38,8 @@ final class Controller: ObservableObject {
             AVAudioUnitComponentManager.shared().components(matching: AudioComponentDescription(
                 componentType: $0, componentSubType: 0, componentManufacturer: 0, componentFlags: 0, componentFlagsMask: 0))
         }.sorted { ($0.manufacturerName, $0.name) < ($1.manufacturerName, $1.name) }
+        auto.reference = settings.autoReference
+        auto.samples = settings.autoSamples
 
         CA.listen(systemObject, kAudioHardwarePropertyDefaultOutputDevice) { [weak self] in
             Task { @MainActor in self?.outputChanged() }
@@ -138,7 +142,8 @@ final class Controller: ObservableObject {
             p = Preset(id: Genre.ownerID, name: g.name)
             gains = g.gains
         }
-        let offsets = basicOffsets(bass: settings.bass, mid: settings.mid, treble: settings.treble)
+        let a = settings.auto ? auto : AutoEQ()
+        let offsets = basicOffsets(bass: settings.bass + a.bass, mid: settings.mid, treble: settings.treble + a.treble)
         gains = zip(gains, offsets).map { $0 + $1 }
         let correction = d.kind == .headphones && d.correctionOn ? d.correction : []
         p.bands = Array((correction + graphicBands(gains) + p.bands.filter(\.on)).prefix(maxBands))
@@ -337,7 +342,28 @@ final class Controller: ObservableObject {
         rebuild()
     }
 
+    func autoToggled() {
+        if !settings.auto {
+            auto.bass = 0
+            auto.treble = 0
+            pipeline?.apply(effective)
+        }
+    }
+
+    private func runAuto() {
+        guard settings.auto, let p = pipeline, let b = analyzer.balance(fs: sampleRate) else { return }
+        auto.update(low: b.low, high: b.high, dt: 2)
+        if debug { NSLog("Bassment: auto low=%.1f high=%.1f -> bass %+.1f treble %+.1f", b.low, b.high, auto.bass, auto.treble) }
+        p.apply(effective)
+        ticks += 1
+        if ticks % 30 == 0 { // persist the learned balance every minute
+            settings.autoReference = auto.reference
+            settings.autoSamples = auto.samples
+        }
+    }
+
     private func tick() {
+        runAuto()
         processes = AppProcess.all()
         if debug {
             let level = (0..<Analyzer.size).reduce(Float(0)) { max($0, abs(analyzer.ring[$1])) }

@@ -208,7 +208,8 @@ final class Pipeline {
             let l = ok ? UnsafePointer(outB[0].mData!.assumingMemoryBound(to: Float.self)) : UnsafePointer(L)
             let r = ok ? UnsafePointer(outB[1].mData!.assumingMemoryBound(to: Float.self)) : UnsafePointer(R)
             writeOutput(outs, l: l, r: r, frames: frames)
-            Analyzer.write(ring: ring, head: head, l: l, r: r, frames: frames)
+            // The analyzer sees the music before EQ: the graph shows the source, auto mode judges the source.
+            Analyzer.write(ring: ring, head: head, l: L, r: R, frames: frames)
         }, "create IOProc")
         try CA.check(AudioDeviceStart(aggregate, procID), "start audio")
     }
