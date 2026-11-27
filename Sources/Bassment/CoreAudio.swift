@@ -1,3 +1,4 @@
+import AudioToolbox
 import CoreAudio
 import Foundation
 
@@ -68,8 +69,25 @@ enum CA {
         return abl.map { Int($0.mNumberChannels) }
     }
 
-    static func listen(_ obj: AudioObjectID, _ sel: AudioObjectPropertySelector, _ block: @escaping () -> Void) {
-        var a = addr(sel)
+    /// The device's main output volume (0...1), as the system volume keys set it; nil if it has none (e.g. HDMI monitors).
+    static func volume(_ dev: AudioObjectID) -> Float? {
+        var a = addr(kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioDevicePropertyScopeOutput)
+        var settable: DarwinBoolean = false
+        guard AudioObjectHasProperty(dev, &a), AudioObjectIsPropertySettable(dev, &a, &settable) == noErr, settable.boolValue else { return nil }
+        var v: Float32 = 0
+        var size = UInt32(MemoryLayout<Float32>.size)
+        return AudioObjectGetPropertyData(dev, &a, 0, nil, &size, &v) == noErr ? v : nil
+    }
+
+    static func setVolume(_ dev: AudioObjectID, _ v: Float) {
+        var a = addr(kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioDevicePropertyScopeOutput)
+        var x = Float32(min(max(v, 0), 1))
+        _ = AudioObjectSetPropertyData(dev, &a, 0, nil, UInt32(MemoryLayout<Float32>.size), &x)
+    }
+
+    static func listen(_ obj: AudioObjectID, _ sel: AudioObjectPropertySelector,
+                       _ scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal, _ block: @escaping () -> Void) {
+        var a = addr(sel, scope)
         AudioObjectAddPropertyListenerBlock(obj, &a, DispatchQueue.main) { _, _ in block() }
     }
 }

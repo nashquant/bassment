@@ -16,6 +16,10 @@ final class Controller: ObservableObject {
     @Published var settings: Settings { didSet { settingsChanged() } }
     @Published private(set) var outputName = "—"
     @Published private(set) var outputUID = ""
+    /// Volume of the current output device; nil when the device has no volume control.
+    @Published private(set) var volume: Float?
+    private var outputID = AudioObjectID(0)
+    private var volumeListened: Set<AudioObjectID> = []
     @Published private(set) var processes: [AppProcess] = []
     @Published private(set) var status = "Starting"
     @Published private(set) var sampleRate: Double = 48000
@@ -334,8 +338,24 @@ final class Controller: ObservableObject {
         }
     }
 
+    var volumeBinding: Binding<Float> {
+        Binding(get: { self.volume ?? 0 }, set: { self.volume = $0; CA.setVolume(self.outputID, $0) })
+    }
+
+    private func refreshVolume() {
+        volume = CA.volume(outputID)
+        if debug { NSLog("Bassment: volume %@", "\(volume.map { String($0) } ?? "none")") }
+    }
+
     private func outputChanged() {
         let id = CA.defaultOutput
+        outputID = id
+        if volumeListened.insert(id).inserted { // one listener per device, kept for the app's lifetime
+            CA.listen(id, kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioDevicePropertyScopeOutput) { [weak self] in
+                Task { @MainActor in self?.refreshVolume() }
+            }
+        }
+        refreshVolume()
         let uid = CA.string(id, kAudioDevicePropertyDeviceUID) ?? ""
         let name = CA.string(id, kAudioObjectPropertyName) ?? "?"
         guard uid != outputUID || pipeline == nil else { return }

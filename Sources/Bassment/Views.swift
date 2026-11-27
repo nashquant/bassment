@@ -122,6 +122,20 @@ struct OutputRow: View {
     }
 }
 
+struct VolumeRow: View {
+    @ObservedObject var c: Controller
+
+    var body: some View {
+        HStack {
+            Image(systemName: "speaker.fill").foregroundStyle(.secondary)
+            Slider(value: c.volumeBinding, in: 0...1)
+            Text(c.volume.map { "\(Int(($0 * 100).rounded()))%" } ?? "—").monospacedDigit().frame(width: 40, alignment: .trailing)
+        }
+        .disabled(c.volume == nil)
+        .help(c.volume == nil ? "This output has no volume control" : "Output volume")
+    }
+}
+
 struct AutoToggle: View {
     @ObservedObject var c: Controller
 
@@ -148,6 +162,7 @@ struct QuickView: View {
         VStack(alignment: .leading, spacing: 10) {
             Header(c: c)
             OutputRow(c: c)
+            VolumeRow(c: c)
             Divider()
             VStack(spacing: 2) {
                 ForEach(c.favorites, id: \.self) { id in
@@ -198,6 +213,7 @@ struct MainView: View {
             VStack(alignment: .leading, spacing: 14) {
                 Header(c: c)
                 OutputRow(c: c)
+                VolumeRow(c: c)
 
                 section("Preset") { StyleGrid(c: c) }
                 section("Bass · Mid · Treble") {
