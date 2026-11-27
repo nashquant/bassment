@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 enum SleepSound: String, CaseIterable, Identifiable {
-    case pink, brown, rain, ocean, tone432
+    case pink, brown, rain, ocean, ambient432
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -10,7 +10,7 @@ enum SleepSound: String, CaseIterable, Identifiable {
         case .brown: "Brown noise"
         case .rain: "Rain"
         case .ocean: "Ocean"
-        case .tone432: "432 Hz tone"
+        case .ambient432: "432 Hz ambient"
         }
     }
 }
@@ -46,11 +46,12 @@ struct NoiseGen {
     private(set) var gain: Float = 0
     private var l = Channel(seed: 0x1234_5678), r = Channel(seed: 0x9E37_79B9)
     private var wave: Float = 0, period: Float = 9
-    private var tone: Float = 0, sub: Float = 0, lfo: Float = 0
+    private var music: Ambient432
     private let fs: Float, smooth: Float, dropRate: Float, dropDecay: Float, rainLow: Float, rainHigh: Float
 
     init(sampleRate: Float) {
         fs = sampleRate
+        music = Ambient432(sampleRate: sampleRate)
         smooth = 1 - expf(-1 / (0.05 * sampleRate))       // ~50 ms gain glide: no clicks
         dropRate = 40 / sampleRate                          // droplets per sample per channel
         dropDecay = expf(-1 / (0.004 * sampleRate))         // 4 ms droplet tail
@@ -85,8 +86,8 @@ struct NoiseGen {
             let a = 1 - expf(-2 * .pi * (250 + 2200 * env * env) / fs) // brighter at the crest
             c.lp += a * (x - c.lp)
             return c.lp * env * 0.7
-        case .tone432:
-            return 0 // rendered in render(): both channels share the phase
+        case .ambient432:
+            return 0 // rendered in render(): one music source for both channels
         }
     }
 
@@ -100,14 +101,10 @@ struct NoiseGen {
                 eR = Self.swell(wave + 0.06) // the wave reaches one ear a little later
             }
             gain += (target - gain) * smooth
-            if sound == .tone432 {
-                // 432 Hz plus its lower octave, with a slow swell that drifts between the ears.
-                tone += 432 / fs; if tone >= 1 { tone -= 1 }
-                sub += 216 / fs; if sub >= 1 { sub -= 1 }
-                lfo += 0.08 / fs; if lfo >= 1 { lfo -= 1 }
-                let x = (sinf(2 * .pi * tone) * 0.6 + sinf(2 * .pi * sub) * 0.4) * 0.15 * gain
-                outL[i] = x * (0.75 + 0.25 * sinf(2 * .pi * lfo))
-                outR[i] = x * (0.75 + 0.25 * sinf(2 * .pi * (lfo + 0.25)))
+            if sound == .ambient432 {
+                let (a, b) = music.next()
+                outL[i] = min(max(a * gain, -1), 1)
+                outR[i] = min(max(b * gain, -1), 1)
                 continue
             }
             outL[i] = min(max(sample(&l, env: eL) * gain, -1), 1)
@@ -116,10 +113,143 @@ struct NoiseGen {
     }
 }
 
+/// Generative ambient music tuned to A = 432 Hz: slow pad chords that cross-fade into each other,
+/// plus a soft singing-bowl note now and then. The Ambience engine adds a large reverb.
+struct Ambient432 {
+    /// Sine oscillator by complex rotation: 4 multiplies per sample, no sinf.
+    struct Osc {
+        var re: Float = 1, im: Float = 0, cr: Float = 1, ci: Float = 0
+        mutating func set(freq: Float, fs: Float, phase: Float) {
+            re = cosf(phase); im = sinf(phase)
+            cr = cosf(2 * .pi * freq / fs); ci = sinf(2 * .pi * freq / fs)
+        }
+        mutating func next() -> Float {
+            let r = re * cr - im * ci
+            im = re * ci + im * cr
+            re = r
+            return im
+        }
+        mutating func renorm() { let m = 1 / (re * re + im * im).squareRoot(); re *= m; im *= m }
+    }
+
+    /// One pad note: three slightly detuned fundamentals (slow beating = movement), octave and twelfth.
+    struct Voice {
+        var osc = [Osc](repeating: Osc(), count: 5)
+        var panL: Float = 0.7, panR: Float = 0.7, lfo: Float = 0, lfoRate: Float = 0.05
+    }
+
+    static let partials: [(ratio: Float, amp: Float)] = [(1, 0.3), (1.0021, 0.3), (0.9979, 0.3), (2, 0.18), (3, 0.05)]
+    /// Semitones from A4 = 432 Hz: Am9, Fmaj7, Cmaj7, Em7, voiced wide and low.
+    static let chords: [[Float]] = [[-24, -17, -12, -9, -5, 2], [-28, -21, -16, -12, -9, -5],
+                                    [-21, -14, -9, -5, -2, 2], [-29, -22, -17, -14, -7, -2]]
+    static let bellNotes: [Float] = [-12, -9, -7, -5, 0, 3, 5, 7] // A minor pentatonic
+    static let block = 32                                       // control rate: envelopes every 32 samples
+
+    private let fs: Float
+    private var seed: UInt32 = 0x2545_F491
+    private var banks = [[Voice]](repeating: [Voice](repeating: Voice(), count: 6), count: 2)
+    private var level: [Float] = [0, 0], target: [Float] = [1, 0]
+    private var gains = [Float](repeating: 0, count: 24)        // per bank × voice × L/R, at control rate
+    private var active = 0, chord = 0, clock = 0, phaseInBlock = 0
+    private var bell = [Osc](repeating: Osc(), count: 3), bellEnv: [Float] = [0, 0, 0], bellDecay: [Float] = [0, 0, 0]
+    private var bellAttack: Float = 0, bellPan: Float = 0.5, nextBell = 0
+    private let chordLen: Int, fadeLen: Int
+
+    init(sampleRate: Float) {
+        fs = sampleRate
+        chordLen = Int(26 * sampleRate)
+        fadeLen = Int(9 * sampleRate)
+        bellDecay = [5, 2.5, 1.2].map { expf(-1 / ($0 * sampleRate)) }
+        nextBell = Int(6 * sampleRate)
+        setChord(bank: 0, chord: 0)
+    }
+
+    private mutating func random() -> Float { // 0...1
+        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5
+        return Float(seed) / Float(UInt32.max)
+    }
+
+    private static func freq(_ semis: Float) -> Float { 432 * powf(2, semis / 12) }
+
+    private mutating func setChord(bank: Int, chord c: Int) {
+        for (v, semis) in Self.chords[c].enumerated() {
+            for (k, p) in Self.partials.enumerated() {
+                banks[bank][v].osc[k].set(freq: Self.freq(semis) * p.ratio, fs: fs, phase: random() * 2 * .pi)
+            }
+            let pan = 0.15 + 0.7 * random()
+            banks[bank][v].panL = cosf(pan * .pi / 2)
+            banks[bank][v].panR = sinf(pan * .pi / 2)
+            banks[bank][v].lfo = random()
+            banks[bank][v].lfoRate = 0.03 + 0.06 * random()
+        }
+    }
+
+    private mutating func control() {
+        let dt = Float(Self.block) / fs
+        clock += Self.block
+        if target[active] == 1, clock >= chordLen - fadeLen { // start the cross-fade to a different chord
+            var next = chord
+            while next == chord { next = Int(random() * Float(Self.chords.count)) % Self.chords.count }
+            chord = next
+            setChord(bank: 1 - active, chord: next)
+            target[active] = 0
+            target[1 - active] = 1
+        }
+        if clock >= chordLen {
+            active = 1 - active
+            clock = fadeLen
+        }
+        for b in 0..<2 {
+            level[b] += min(max(target[b] - level[b], -dt / 9), dt / 9)
+            let bankGain = sinf(level[b] * .pi / 2) / 6 // equal-power cross-fade
+            for v in 0..<6 {
+                banks[b][v].lfo += banks[b][v].lfoRate * dt
+                let g = bankGain * (0.65 + 0.35 * sinf(2 * .pi * banks[b][v].lfo))
+                gains[(b * 6 + v) * 2] = g * banks[b][v].panL
+                gains[(b * 6 + v) * 2 + 1] = g * banks[b][v].panR
+                for k in 0..<5 { banks[b][v].osc[k].renorm() }
+            }
+        }
+        nextBell -= Self.block
+        if nextBell <= 0 {
+            let f = Self.freq(Self.bellNotes[Int(random() * Float(Self.bellNotes.count)) % Self.bellNotes.count])
+            for (k, ratio) in [Float(1), 2.76, 5.4].enumerated() { bell[k].set(freq: f * ratio, fs: fs, phase: 0) }
+            bellEnv = [0.11, 0.04, 0.015]
+            bellAttack = 0
+            bellPan = 0.2 + 0.6 * random()
+            nextBell = Int((8 + 12 * random()) * fs)
+        }
+        for k in 0..<3 { bell[k].renorm() }
+    }
+
+    mutating func next() -> (Float, Float) {
+        if phaseInBlock == 0 { control() }
+        phaseInBlock = (phaseInBlock + 1) % Self.block
+        var l: Float = 0, r: Float = 0
+        for b in 0..<2 where level[b] > 0 {
+            for v in 0..<6 {
+                var x: Float = 0
+                for k in 0..<5 { x += banks[b][v].osc[k].next() * Self.partials[k].amp }
+                l += x * gains[(b * 6 + v) * 2]
+                r += x * gains[(b * 6 + v) * 2 + 1]
+            }
+        }
+        bellAttack = min(bellAttack + 1 / (0.03 * fs), 1) // 30 ms soft strike
+        var bl: Float = 0
+        for k in 0..<3 {
+            bellEnv[k] *= bellDecay[k]
+            bl += bell[k].next() * bellEnv[k]
+        }
+        bl *= bellAttack
+        return (l + bl * (1 - bellPan), r + bl * bellPan)
+    }
+}
+
 /// Plays a NoiseGen on the default output with its own engine. Bassment's taps exclude its own
 /// process, so these sounds skip the EQ and play even with the EQ off.
 final class Ambience {
     private let engine = AVAudioEngine()
+    private let reverb = AVAudioUnitReverb()
     private let gen: UnsafeMutablePointer<NoiseGen> = {
         let p = UnsafeMutablePointer<NoiseGen>.allocate(capacity: 1)
         p.initialize(to: NoiseGen(sampleRate: 48000))
@@ -128,7 +258,7 @@ final class Ambience {
 
     var sound: SleepSound {
         get { gen.pointee.sound }
-        set { gen.pointee.sound = newValue }
+        set { gen.pointee.sound = newValue; reverb.bypass = newValue != .ambient432 }
     }
     var gain: Float {
         get { gen.pointee.target }
@@ -152,8 +282,13 @@ final class Ambience {
             g.pointee.render(l: l, r: r, frames: Int(frames))
             return noErr
         }
+        reverb.loadFactoryPreset(.cathedral)
+        reverb.wetDryMix = 45
+        reverb.bypass = sound != .ambient432 // the noises are already diffuse
         engine.attach(src)
-        engine.connect(src, to: engine.mainMixerNode, format: fmt)
+        engine.attach(reverb)
+        engine.connect(src, to: reverb, format: fmt)
+        engine.connect(reverb, to: engine.mainMixerNode, format: fmt)
         try engine.start()
     }
 
