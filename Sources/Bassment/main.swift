@@ -89,5 +89,20 @@ func selfTest() -> Bool {
     expect(fresh.bass == 0 && abs(fresh.reference![0]) < 0.5, "auto: no correction in the first minute; reference is the mean")
     for _ in 0..<60 { boomy.update(low: 9, high: -12, dt: 2) }
     expect(boomy.bass >= -AutoEQ.limit - 0.001 && boomy.bass < -4, "auto: correction capped at the limit")
+    for sound in SleepSound.allCases {
+        var g = NoiseGen(sampleRate: 48000)
+        g.sound = sound
+        g.target = 1
+        let n = 48000 * 5
+        let l = UnsafeMutablePointer<Float>.allocate(capacity: n), r = UnsafeMutablePointer<Float>.allocate(capacity: n)
+        defer { l.deallocate(); r.deallocate() }
+        g.render(l: l, r: r, frames: n)
+        var ll = 0.0, rr = 0.0, lr = 0.0
+        for i in 24000..<n { ll += Double(l[i] * l[i]); rr += Double(r[i] * r[i]); lr += Double(l[i] * r[i]) }
+        let rms = (ll / Double(n - 24000)).squareRoot(), corr = lr / (ll * rr).squareRoot()
+        expect(abs(l[0]) < 0.01 && (0..<n).allSatisfy { l[$0].isFinite && abs(l[$0]) <= 1 }
+               && rms > 0.07 && rms < 0.16 && abs(corr) < 0.2,
+               "sleep \(sound.rawValue): fades in, ~-19 dBFS, wide stereo")
+    }
     return ok
 }

@@ -140,6 +140,9 @@ struct Settings: Codable {
     var presets: [Preset] = []
     var devices: [String: DeviceProfile] = [:] // output device UID → profile
     var appVolumes: [String: Float] = [:]      // bundle ID → gain 0…1
+    var sleepSound = SleepSound.brown.rawValue
+    var sleepLevel: Float = 0.5
+    var sleepMinutes = 60                      // 0 = no timer
 
     init() {}
 
@@ -159,6 +162,9 @@ struct Settings: Codable {
         presets = (try? c.decodeIfPresent([Preset].self, forKey: .presets)) ?? []
         devices = (try? c.decodeIfPresent([String: DeviceProfile].self, forKey: .devices)) ?? [:]
         appVolumes = try c.decodeIfPresent([String: Float].self, forKey: .appVolumes) ?? [:]
+        sleepSound = try c.decodeIfPresent(String.self, forKey: .sleepSound) ?? SleepSound.brown.rawValue
+        sleepLevel = try c.decodeIfPresent(Float.self, forKey: .sleepLevel) ?? 0.5
+        sleepMinutes = try c.decodeIfPresent(Int.self, forKey: .sleepMinutes) ?? 60
     }
 
     static var url: URL {

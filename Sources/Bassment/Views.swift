@@ -136,6 +136,39 @@ struct VolumeRow: View {
     }
 }
 
+struct SleepPanel: View {
+    @ObservedObject var c: Controller
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "moon.zzz").foregroundStyle(.secondary)
+                Picker("Sound", selection: $c.settings.sleepSound) {
+                    ForEach(SleepSound.allCases) { Text($0.label).tag($0.rawValue) }
+                }
+                .labelsHidden().fixedSize()
+                Picker("Timer", selection: $c.settings.sleepMinutes) {
+                    Text("No timer").tag(0)
+                    ForEach([15, 30, 60, 90], id: \.self) { Text("\($0) min").tag($0) }
+                }
+                .labelsHidden().fixedSize()
+                .onChange(of: c.settings.sleepMinutes) { c.restartSleepTimer() }
+                Spacer()
+                Button { c.toggleSleep() } label: { Image(systemName: c.sleeping ? "stop.fill" : "play.fill") }
+                    .help(c.sleeping ? "Stop sleep sounds" : "Play sleep sounds")
+            }
+            if c.sleeping {
+                HStack {
+                    Image(systemName: "speaker.wave.1").foregroundStyle(.secondary)
+                    Slider(value: $c.settings.sleepLevel, in: 0...1)
+                }
+                Text(c.sleepEnd.map { "Fades out and stops at \($0.formatted(date: .omitted, time: .shortened))" } ?? "Plays until you stop it")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 struct AutoToggle: View {
     @ObservedObject var c: Controller
 
@@ -189,6 +222,8 @@ struct QuickView: View {
             Divider()
             AutoToggle(c: c)
             Divider()
+            SleepPanel(c: c)
+            Divider()
             HStack {
                 Button("Open Bassment") {
                     openWindow(id: "main")
@@ -223,6 +258,7 @@ struct MainView: View {
                     AutoToggle(c: c)
                 }
                 EQGraph(c: c)
+                section("Sleep sounds") { SleepPanel(c: c) }
                 Text("Preset and sliders apply to every output. Each device gets its own correction automatically. Right-click a preset to add it to the menu bar favorites.")
                     .font(.caption2).foregroundStyle(.secondary)
                 DisclosureGroup("Device correction") { correction.padding(.top, 6) }

@@ -19,6 +19,12 @@ final class Controller: ObservableObject {
     /// Volume of the current output device; nil when the device has no volume control.
     @Published private(set) var volume: Float?
     private var outputID = AudioObjectID(0)
+    @Published private(set) var sleeping = false
+    @Published private(set) var sleepEnd: Date?
+    private var ambience: Ambience?
+    private var sleepFade: Float = 1
+    private var volumeBeforeFade: (dev: AudioObjectID, v: Float)?
+    static let fadeSeconds: Double = 600 // the timer fades during its last 10 minutes
     private var volumeListened: Set<AudioObjectID> = []
     @Published private(set) var processes: [AppProcess] = []
     @Published private(set) var status = "Starting"
@@ -347,6 +353,55 @@ final class Controller: ObservableObject {
         if debug { NSLog("Bassment: volume %@", "\(volume.map { String($0) } ?? "none")") }
     }
 
+    // MARK: Sleep sounds
+
+    private var sleepSound: SleepSound { SleepSound(rawValue: settings.sleepSound) ?? .brown }
+
+    func toggleSleep() {
+        if sleeping { stopSleep(restoreVolume: true); return }
+        do {
+            ambience = try Ambience(sound: sleepSound, gain: settings.sleepLevel)
+            sleeping = true
+            restartSleepTimer()
+        } catch {
+            status = "Sleep sounds: \(error)"
+        }
+    }
+
+    func restartSleepTimer() {
+        restoreVolume()
+        sleepFade = 1
+        ambience?.gain = settings.sleepLevel
+        sleepEnd = sleeping && settings.sleepMinutes > 0 ? Date().addingTimeInterval(Double(settings.sleepMinutes) * 60) : nil
+    }
+
+    private func stopSleep(restoreVolume restore: Bool) {
+        ambience = nil
+        sleeping = false
+        sleepEnd = nil
+        sleepFade = 1
+        if restore { restoreVolume() } else { volumeBeforeFade = nil }
+    }
+
+    private func restoreVolume() {
+        if let saved = volumeBeforeFade { CA.setVolume(saved.dev, saved.v) }
+        volumeBeforeFade = nil
+    }
+
+    /// Fades the sleep sound and the output volume (music too) to zero by the end of the timer.
+    private func runSleepTimer() {
+        guard let a = ambience, let end = sleepEnd else { return }
+        let left = end.timeIntervalSinceNow
+        sleepFade = Float(min(max(left / min(Self.fadeSeconds, Double(settings.sleepMinutes) * 60), 0), 1))
+        a.gain = settings.sleepLevel * sleepFade
+        if sleepFade < 1, volumeBeforeFade == nil, let v = volume { volumeBeforeFade = (outputID, v) }
+        if let saved = volumeBeforeFade { CA.setVolume(saved.dev, saved.v * sleepFade) }
+        if left <= 0 {
+            // Bring the volume back only if nothing else plays: music still on stays silent until morning.
+            stopSleep(restoreVolume: !AppProcess.all().contains { $0.playing })
+        }
+    }
+
     private func outputChanged() {
         let id = CA.defaultOutput
         outputID = id
@@ -363,6 +418,12 @@ final class Controller: ObservableObject {
         outputUID = uid
         if !uid.isEmpty, settings.devices[uid] == nil { settings.devices[uid] = Self.makeProfile(id, name: name) }
         rebuild()
+        if sleeping { // the sleep engine stays on the old device: move it
+            restoreVolume()
+            ambience = nil
+            ambience = try? Ambience(sound: sleepSound, gain: settings.sleepLevel * sleepFade)
+            if ambience == nil { stopSleep(restoreVolume: false) }
+        }
     }
 
     func autoToggled() {
@@ -387,6 +448,7 @@ final class Controller: ObservableObject {
 
     private func tick() {
         runAuto()
+        runSleepTimer()
         if windowOpen || !settings.appVolumes.isEmpty { processes = AppProcess.all() }
         if debug {
             let level = (0..<Analyzer.size).reduce(Float(0)) { max($0, abs(analyzer.ring[$1])) }
@@ -407,6 +469,10 @@ final class Controller: ObservableObject {
     }
 
     private func settingsChanged() {
+        if let a = ambience {
+            a.sound = sleepSound
+            a.gain = settings.sleepLevel * sleepFade
+        }
         if let p = pipeline {
             p.apply(effective)
             for (b, v) in settings.appVolumes { p.setGain(bundle: b, v) }
