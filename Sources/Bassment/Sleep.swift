@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 enum SleepSound: String, CaseIterable, Identifiable {
-    case pink, brown, rain, ocean, ambient432
+    case pink, brown, rain, ocean, ambient432, lofi
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -11,6 +11,7 @@ enum SleepSound: String, CaseIterable, Identifiable {
         case .rain: "Rain"
         case .ocean: "Ocean"
         case .ambient432: "432 Hz ambient"
+        case .lofi: "Lo-fi"
         }
     }
 }
@@ -47,11 +48,13 @@ struct NoiseGen {
     private var l = Channel(seed: 0x1234_5678), r = Channel(seed: 0x9E37_79B9)
     private var wave: Float = 0, period: Float = 9
     private var music: Ambient432
+    private var beats: LoFi
     private let fs: Float, smooth: Float, dropRate: Float, dropDecay: Float, rainLow: Float, rainHigh: Float
 
     init(sampleRate: Float) {
         fs = sampleRate
         music = Ambient432(sampleRate: sampleRate)
+        beats = LoFi(sampleRate: sampleRate)
         smooth = 1 - expf(-1 / (0.05 * sampleRate))       // ~50 ms gain glide: no clicks
         dropRate = 40 / sampleRate                          // droplets per sample per channel
         dropDecay = expf(-1 / (0.004 * sampleRate))         // 4 ms droplet tail
@@ -86,7 +89,7 @@ struct NoiseGen {
             let a = 1 - expf(-2 * .pi * (250 + 2200 * env * env) / fs) // brighter at the crest
             c.lp += a * (x - c.lp)
             return c.lp * env * 0.7
-        case .ambient432:
+        case .ambient432, .lofi:
             return 0 // rendered in render(): one music source for both channels
         }
     }
@@ -101,8 +104,8 @@ struct NoiseGen {
                 eR = Self.swell(wave + 0.06) // the wave reaches one ear a little later
             }
             gain += (target - gain) * smooth
-            if sound == .ambient432 {
-                let (a, b) = music.next()
+            if sound == .ambient432 || sound == .lofi {
+                let (a, b) = sound == .lofi ? beats.next() : music.next()
                 outL[i] = min(max(a * gain, -1), 1)
                 outR[i] = min(max(b * gain, -1), 1)
                 continue
@@ -245,6 +248,169 @@ struct Ambient432 {
     }
 }
 
+/// Generative lo-fi hip-hop for working: swung drums, jazzy electric-piano chords, a round bass,
+/// a sparse melody, vinyl crackle and a dark low-pass. Chords, drum fills and melody change every bar.
+struct LoFi {
+    /// FM electric piano note (carrier:modulator 1:1, the modulation fades faster than the note).
+    struct EP {
+        var phase: Float = 0, inc: Float = 0, env: Float = 0, index: Float = 0, decay: Float = 1
+        var panL: Float = 0.7, panR: Float = 0.7, wait = 0
+    }
+
+    static let bpm: Float = 78
+    static let swing: Float = 0.6 // the first 16th takes 60% of each 8th note
+    /// Four 1-bar chords per progression: (bass MIDI note, chord voicing).
+    static let progressions: [[(Int, [Int])]] = [
+        [(38, [53, 57, 60, 64]), (43, [53, 59, 64, 69]), (36, [52, 55, 59, 62]), (45, [55, 59, 60, 64])], // Dm9 G13 Cmaj9 Am9
+        [(41, [52, 57, 60, 65]), (40, [50, 55, 59, 64]), (38, [48, 53, 57, 62]), (36, [47, 52, 55, 60])], // Fmaj7 Em7 Dm7 Cmaj7
+        [(41, [52, 55, 57, 60]), (36, [52, 55, 59, 62]), (41, [52, 55, 57, 60]), (43, [50, 52, 55, 59])], // Fmaj9 Cmaj9 Fmaj9 G6/9
+    ]
+    static let melodyNotes = [72, 74, 76, 79, 81, 84] // C major pentatonic, above the chords
+    static let kickPatterns: [[Int]] = [[0, 10], [0, 10], [0, 7, 10], [0, 3, 10], [0, 8, 10]]
+
+    private let fs: Float, barLen: Float, eighth: Float
+    private var seed: UInt32 = 0x6C07_8965
+    private var ep = [EP](repeating: EP(), count: 16)
+    private var epDecay: Float, melodyDecay: Float, indexDecay: Float, attack: Float = 0
+    private var bar = 0, step = 0, inBar: Float = 0, progression = 0
+    private var kicks: [Int] = [0, 10], hats = [Float](repeating: 0, count: 16), melody = [Int](repeating: 0, count: 16)
+    private var restrike = false, bassSecond = 10, ghost = false
+    private var kickEnv: Float = 0, kickPhase: Float = 0, kickFreq: Float = 50
+    private var snareEnv: Float = 0, snarePhase: Float = 0, snHP: Float = 0, snLP: Float = 0
+    private var hatEnv: Float = 0, hatHP1: Float = 0, hatHP2: Float = 0
+    private var bassEnv: Float = 0, bassPhase: Float = 0, bassInc: Float = 0
+    private var crackle: Float = 0, hiss: Float = 0, wow: Float = 0
+    private var lpL: (Float, Float) = (0, 0), lpR: (Float, Float) = (0, 0)
+    private let dKick: Float, dPitch: Float, dSnare: Float, dTone: Float, dHat: Float, dBass: Float, dClick: Float
+    private let aSnHP: Float, aSnLP: Float, aHat: Float, aMaster: Float, aHiss: Float
+    private var toneEnv: Float = 0
+
+    init(sampleRate: Float) {
+        fs = sampleRate
+        barLen = 4 * 60 / Self.bpm * sampleRate
+        eighth = barLen / 8
+        func decay(_ seconds: Float) -> Float { expf(-1 / (seconds * sampleRate)) }
+        func pole(_ hz: Float) -> Float { 1 - expf(-2 * .pi * hz / sampleRate) }
+        epDecay = decay(1.6); melodyDecay = decay(0.7); indexDecay = decay(0.35)
+        dKick = decay(0.16); dPitch = decay(0.035); dSnare = decay(0.11); dTone = decay(0.04)
+        dHat = decay(0.03); dBass = decay(0.55); dClick = decay(0.0008)
+        aSnHP = pole(900); aSnLP = pole(5000); aHat = pole(6000); aMaster = pole(6500); aHiss = pole(3000)
+    }
+
+    private mutating func random() -> Float { // 0...1
+        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5
+        return Float(seed) / Float(UInt32.max)
+    }
+
+    private static func hz(_ midi: Int) -> Float { 440 * powf(2, Float(midi - 69) / 12) }
+
+    private mutating func play(_ midi: Int, velocity: Float, pan: Float, wait: Int, melodic: Bool = false) {
+        var v = 0
+        for i in ep.indices where ep[i].env < ep[v].env { v = i } // steal the quietest voice
+        ep[v] = EP(phase: 0, inc: Self.hz(midi) / fs, env: velocity, index: 1.3 * velocity + 0.3,
+                   decay: melodic ? melodyDecay : epDecay,
+                   panL: cosf(pan * .pi / 2), panR: sinf(pan * .pi / 2), wait: wait)
+    }
+
+    private mutating func newBar() {
+        if bar % 8 == 0 { progression = Int(random() * Float(Self.progressions.count)) % Self.progressions.count }
+        kicks = Self.kickPatterns[Int(random() * Float(Self.kickPatterns.count)) % Self.kickPatterns.count]
+        for s in 0..<16 { hats[s] = s % 2 == 0 ? 0.5 + 0.25 * random() : (random() < 0.3 ? 0.25 * random() + 0.1 : 0) }
+        restrike = random() < 0.5
+        bassSecond = random() < 0.7 ? 10 : 8
+        ghost = random() < 0.2
+        melody = [Int](repeating: 0, count: 16)
+        if random() < 0.55 {
+            var n = Int(random() * Float(Self.melodyNotes.count)) % Self.melodyNotes.count
+            for _ in 0..<(2 + Int(random() * 3)) {
+                n = min(max(n + Int(random() * 3) - 1, 0), Self.melodyNotes.count - 1) // small steps
+                melody[2 * (Int(random() * 8) % 8)] = Self.melodyNotes[n]
+            }
+        }
+    }
+
+    private mutating func trigger(_ s: Int) {
+        if s == 0 { newBar() }
+        let (root, chord) = Self.progressions[progression][bar % 4]
+        if s == 0 || (s == 7 && restrike) {
+            let vel: Float = s == 0 ? 0.11 : 0.07
+            for (i, n) in chord.enumerated() {
+                play(n, velocity: vel * (0.85 + 0.3 * random()), pan: 0.3 + 0.4 * Float(i) / 3, wait: Int(Float(i) * 0.012 * fs))
+            }
+        }
+        if melody[s] > 0 { play(melody[s], velocity: 0.09, pan: 0.45 + 0.1 * random(), wait: 0, melodic: true) }
+        if kicks.contains(s) { kickEnv = 0.55; kickFreq = 130; kickPhase = 0 }
+        if s == 4 || s == 12 || (s == 15 && ghost) {
+            snareEnv = s == 15 ? 0.08 : 0.3 * (0.9 + 0.2 * random()); toneEnv = snareEnv
+        }
+        if hats[s] > 0 { hatEnv = hats[s] * 0.12 }
+        if s == 0 || s == bassSecond { bassEnv = s == 0 ? 0.32 : 0.24; bassInc = Self.hz(root) / fs }
+    }
+
+    mutating func next() -> (Float, Float) {
+        // Sequencer: 16 swung steps per bar.
+        let target = Float(step / 2) * eighth + (step % 2 == 1 ? Self.swing * eighth : 0)
+        if inBar >= target, step < 16 { trigger(step); step += 1 }
+        inBar += 1
+        if inBar >= barLen { inBar -= barLen; step = 0; bar += 1 }
+
+        wow += 0.4 / fs; if wow >= 1 { wow -= 1 }
+        let pitch = 1 + 0.0025 * sinf(2 * .pi * wow) // tape wobble
+        attack = min(attack + 1 / (0.003 * fs), 1)
+        var l: Float = 0, r: Float = 0
+        for i in ep.indices where ep[i].env > 1e-4 {
+            if ep[i].wait > 0 { ep[i].wait -= 1; continue }
+            let p = 2 * Float.pi * ep[i].phase
+            let x = sinf(p + ep[i].index * sinf(p)) * ep[i].env
+            ep[i].phase += ep[i].inc * pitch
+            if ep[i].phase >= 1 { ep[i].phase -= 1 }
+            ep[i].env *= ep[i].decay
+            ep[i].index *= indexDecay
+            l += x * ep[i].panL
+            r += x * ep[i].panR
+        }
+        var drums: Float = 0
+        if kickEnv > 1e-4 {
+            kickFreq = 48 + (kickFreq - 48) * dPitch
+            kickPhase += kickFreq / fs; if kickPhase >= 1 { kickPhase -= 1 }
+            drums += sinf(2 * .pi * kickPhase) * kickEnv
+            kickEnv *= dKick
+        }
+        let w = random() * 2 - 1
+        if snareEnv > 1e-4 {
+            snHP += aSnHP * (w - snHP)
+            snLP += aSnLP * ((w - snHP) - snLP)
+            snarePhase += 185 / fs; if snarePhase >= 1 { snarePhase -= 1 }
+            drums += snLP * snareEnv + sinf(2 * .pi * snarePhase) * toneEnv * 0.5
+            snareEnv *= dSnare; toneEnv *= dTone
+        }
+        var hat: Float = 0
+        if hatEnv > 1e-4 {
+            hatHP1 += aHat * (w - hatHP1)
+            let h1 = w - hatHP1
+            hatHP2 += aHat * (h1 - hatHP2)
+            hat = (h1 - hatHP2) * hatEnv
+            hatEnv *= dHat
+        }
+        if bassEnv > 1e-4 {
+            bassPhase += bassInc; if bassPhase >= 1 { bassPhase -= 1 }
+            let b = sinf(2 * .pi * bassPhase)
+            drums += (b + 0.15 * b * b * b) * bassEnv // a little odd harmonic so it shows on small speakers
+            bassEnv *= dBass
+        }
+        if random() < 5 / fs { crackle = 0.05 + 0.15 * random() } // vinyl
+        crackle *= dClick
+        hiss += aHiss * (w - hiss)
+        let vinyl = w * crackle + hiss * 0.012
+        l += drums + hat * 0.8 + vinyl
+        r += drums + hat * 1.2 + vinyl
+        // Dark two-pole low-pass on the whole mix.
+        lpL.0 += aMaster * (l - lpL.0); lpL.1 += aMaster * (lpL.0 - lpL.1)
+        lpR.0 += aMaster * (r - lpR.0); lpR.1 += aMaster * (lpR.0 - lpR.1)
+        return (lpL.1 * attack * 0.6, lpR.1 * attack * 0.6) // ~-20 dBFS RMS, peaks ~-4 dB
+    }
+}
+
 /// Plays a NoiseGen on the default output with its own engine. Bassment's taps exclude its own
 /// process, so these sounds skip the EQ and play even with the EQ off.
 final class Ambience {
@@ -258,7 +424,7 @@ final class Ambience {
 
     var sound: SleepSound {
         get { gen.pointee.sound }
-        set { gen.pointee.sound = newValue; reverb.bypass = newValue != .ambient432 }
+        set { gen.pointee.sound = newValue; setReverb(newValue) }
     }
     var gain: Float {
         get { gen.pointee.target }
@@ -282,14 +448,19 @@ final class Ambience {
             g.pointee.render(l: l, r: r, frames: Int(frames))
             return noErr
         }
-        reverb.loadFactoryPreset(.cathedral)
-        reverb.wetDryMix = 45
-        reverb.bypass = sound != .ambient432 // the noises are already diffuse
+        setReverb(sound)
         engine.attach(src)
         engine.attach(reverb)
         engine.connect(src, to: reverb, format: fmt)
         engine.connect(reverb, to: engine.mainMixerNode, format: fmt)
         try engine.start()
+    }
+
+    /// Cathedral for the ambient music, a small room for lo-fi; none for the noises (already diffuse).
+    private func setReverb(_ s: SleepSound) {
+        reverb.bypass = s != .ambient432 && s != .lofi
+        reverb.loadFactoryPreset(s == .lofi ? .mediumRoom : .cathedral)
+        reverb.wetDryMix = s == .lofi ? 15 : 45
     }
 
     deinit {

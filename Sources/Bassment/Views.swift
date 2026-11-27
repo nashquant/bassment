@@ -258,7 +258,7 @@ struct MainView: View {
                     AutoToggle(c: c)
                 }
                 EQGraph(c: c)
-                section("Sleep sounds") { SleepPanel(c: c) }
+                section("Sounds") { SleepPanel(c: c) }
                 Text("Preset and sliders apply to every output. Each device gets its own correction automatically. Right-click a preset to add it to the menu bar favorites.")
                     .font(.caption2).foregroundStyle(.secondary)
                 DisclosureGroup("Device correction") { correction.padding(.top, 6) }

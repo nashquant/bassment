@@ -90,7 +90,7 @@ func selfTest() -> Bool {
     for _ in 0..<60 { boomy.update(low: 9, high: -12, dt: 2) }
     expect(boomy.bass >= -AutoEQ.limit - 0.001 && boomy.bass < -4, "auto: correction capped at the limit")
     for sound in SleepSound.allCases {
-        let music = sound == .ambient432 // starts with a 9 s fade-in; partly shared by both ears
+        let music = sound == .ambient432 || sound == .lofi // ambient fades in for 9 s; music is partly shared by both ears
         var g = NoiseGen(sampleRate: 48000)
         g.sound = sound
         g.target = 1
