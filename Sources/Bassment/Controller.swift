@@ -43,6 +43,8 @@ final class Controller: ObservableObject {
     private var windows: [UUID: NSWindow] = [:]
     private var timer: Timer?
     private let debug = ProcessInfo.processInfo.environment["BASSMENT_DEBUG"] != nil
+    /// UI snapshots (--snapshot): no audio capture, no settings writes.
+    static var passive = false
 
     init() {
         NSLog("Bassment: controller init")
@@ -290,6 +292,7 @@ final class Controller: ObservableObject {
     // MARK: Engine
 
     func rebuild() {
+        guard !Self.passive else { return }
         let prev = rebuildTask
         rebuildTask = Task {
             await prev?.value
@@ -477,6 +480,7 @@ final class Controller: ObservableObject {
             p.apply(effective)
             for (b, v) in settings.appVolumes { p.setGain(bundle: b, v) }
         }
+        guard !Self.passive else { return }
         saveItem?.cancel()
         let s = settings
         let item = DispatchWorkItem {

@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 enum SleepSound: String, CaseIterable, Identifiable {
-    case pink, brown, rain, ocean, ambient432, lofi
+    case pink, brown, rain, ocean, breathe, ambient432, lofi
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -10,6 +10,7 @@ enum SleepSound: String, CaseIterable, Identifiable {
         case .brown: "Brown noise"
         case .rain: "Rain"
         case .ocean: "Ocean"
+        case .breathe: "Slow breathing"
         case .ambient432: "432 Hz ambient"
         case .lofi: "Lo-fi"
         }
@@ -46,7 +47,7 @@ struct NoiseGen {
     var target: Float = 0.5                // written by the UI, followed smoothly
     private(set) var gain: Float = 0
     private var l = Channel(seed: 0x1234_5678), r = Channel(seed: 0x9E37_79B9)
-    private var wave: Float = 0, period: Float = 9
+    private var wave: Float = 0, period: Float = 9, breathTime: Float = 0
     private var music: Ambient432
     private var beats: LoFi
     private let fs: Float, smooth: Float, dropRate: Float, dropDecay: Float, rainLow: Float, rainHigh: Float
@@ -62,12 +63,14 @@ struct NoiseGen {
         rainHigh = 1 - expf(-2 * .pi * 7000 / sampleRate)
     }
 
-    /// Wave swell 0.12...1: fast rise (30% of the cycle), long fall.
-    private static func swell(_ phase: Float) -> Float {
+    /// Swell 0.12...1: rises during `rise` of the cycle, then a longer fall.
+    private static func swell(_ phase: Float, rise: Float = 0.3) -> Float {
         let p = phase - phase.rounded(.down)
-        let x = p < 0.3 ? p / 0.3 : 1 - (p - 0.3) / 0.7
+        let x = p < rise ? p / rise : 1 - (p - rise) / (1 - rise)
         return 0.12 + 0.88 * x * x * (3 - 2 * x)
     }
+
+    static func breathPeriod(after seconds: Float) -> Float { min(10 + seconds / 1200 * 3.3, 13.3) }
 
     private func sample(_ c: inout Channel, env: Float) -> Float {
         let w = c.white()
@@ -84,7 +87,7 @@ struct NoiseGen {
             c.hp += rainLow * (x - c.hp)
             c.lp += rainHigh * ((x - c.hp) - c.lp)
             return c.lp * 0.7
-        case .ocean:
+        case .ocean, .breathe:
             let x = c.nextBrown(w) * 0.6 + c.pink(w) * 0.4
             let a = 1 - expf(-2 * .pi * (250 + 2200 * env * env) / fs) // brighter at the crest
             c.lp += a * (x - c.lp)
@@ -102,6 +105,13 @@ struct NoiseGen {
                 if wave >= 1 { wave -= 1; period = 7 + 5 * abs(l.white()) } // next wave in 7–12 s
                 eL = Self.swell(wave)
                 eR = Self.swell(wave + 0.06) // the wave reaches one ear a little later
+            } else if sound == .breathe {
+                // Breath-paced swell (in 40%, out 60%): 6 breaths/min, slowing to 4.5/min over 20 minutes.
+                breathTime += 1 / fs
+                wave += 1 / (period * fs)
+                if wave >= 1 { wave -= 1; period = Self.breathPeriod(after: breathTime) }
+                eL = Self.swell(wave, rise: 0.4)
+                eR = eL
             }
             gain += (target - gain) * smooth
             if sound == .ambient432 || sound == .lofi {

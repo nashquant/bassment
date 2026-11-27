@@ -1,8 +1,40 @@
+import AppKit
 import CoreAudio
 import Foundation
+import SwiftUI
 
 if CommandLine.arguments.contains("--selftest") {
     exit(selfTest() ? 0 : 1)
+}
+if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
+    MainActor.assumeIsolated { snapshot(prefix: CommandLine.arguments[i + 1]) }
+    exit(0)
+}
+
+/// Renders the menu bar panel to PNGs (idle and playing, light and dark) to check layout without screen recording.
+@MainActor func snapshot(prefix: String) {
+    _ = NSApplication.shared
+    Controller.passive = true
+    let c = Controller()
+    c.settings.sleepSound = SleepSound.ambient432.rawValue
+    c.settings.sleepMinutes = 30
+    c.settings.sleepLevel = 0 // silent while "playing"
+    func render(_ name: String, _ scheme: ColorScheme) {
+        let host = NSHostingView(rootView: QuickView(c: c).background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, scheme))
+        host.frame.size = host.fittingSize
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(prefix)-\(name).png"))
+    }
+    render("idle", .light)
+    c.toggleSleep()
+    render("playing", .light)
+    render("playing-dark", .dark)
+    c.toggleSleep()
 }
 BassmentApp.main()
 
@@ -89,6 +121,8 @@ func selfTest() -> Bool {
     expect(fresh.bass == 0 && abs(fresh.reference![0]) < 0.5, "auto: no correction in the first minute; reference is the mean")
     for _ in 0..<60 { boomy.update(low: 9, high: -12, dt: 2) }
     expect(boomy.bass >= -AutoEQ.limit - 0.001 && boomy.bass < -4, "auto: correction capped at the limit")
+    expect(NoiseGen.breathPeriod(after: 0) == 10 && abs(NoiseGen.breathPeriod(after: 600) - 11.65) < 0.01
+           && NoiseGen.breathPeriod(after: 3600) == 13.3, "breathing: 6/min, slowing to 4.5/min over 20 min")
     for sound in SleepSound.allCases {
         let music = sound == .ambient432 || sound == .lofi // ambient fades in for 9 s; music is partly shared by both ears
         var g = NoiseGen(sampleRate: 48000)

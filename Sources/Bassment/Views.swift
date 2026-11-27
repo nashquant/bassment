@@ -141,25 +141,30 @@ struct SleepPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            // Two rows: one row with both pickers and the button does not fit the 280 pt menu.
             HStack {
-                Image(systemName: "moon.zzz").foregroundStyle(.secondary)
+                Image(systemName: "moon.zzz").foregroundStyle(.secondary).frame(width: 18)
                 Picker("Sound", selection: $c.settings.sleepSound) {
                     ForEach(SleepSound.allCases) { Text($0.label).tag($0.rawValue) }
                 }
-                .labelsHidden().fixedSize()
+                .labelsHidden()
+                Button { c.toggleSleep() } label: { Image(systemName: c.sleeping ? "stop.fill" : "play.fill") }
+                    .help(c.sleeping ? "Stop" : "Play")
+            }
+            HStack {
+                Image(systemName: "timer").foregroundStyle(.secondary).frame(width: 18)
                 Picker("Timer", selection: $c.settings.sleepMinutes) {
                     Text("No timer").tag(0)
-                    ForEach([30, 60, 90, 120, 180, 300, 480], id: \.self) { m in Text(m % 60 == 0 ? "\(m / 60) h" : "\(m) min").tag(m) }
+                    ForEach([5, 10, 15, 30, 60, 90, 120, 180, 300, 480], id: \.self) { m in
+                        Text(m % 60 == 0 ? "\(m / 60) h" : "\(m) min").tag(m)
+                    }
                 }
-                .labelsHidden().fixedSize()
+                .labelsHidden()
                 .onChange(of: c.settings.sleepMinutes) { c.restartSleepTimer() }
-                Spacer()
-                Button { c.toggleSleep() } label: { Image(systemName: c.sleeping ? "stop.fill" : "play.fill") }
-                    .help(c.sleeping ? "Stop sleep sounds" : "Play sleep sounds")
             }
             if c.sleeping {
                 HStack {
-                    Image(systemName: "speaker.wave.1").foregroundStyle(.secondary)
+                    Image(systemName: "speaker.wave.1").foregroundStyle(.secondary).frame(width: 18)
                     Slider(value: $c.settings.sleepLevel, in: 0...1)
                 }
                 Text(c.sleepEnd.map { "Fades out and stops at \($0.formatted(date: .omitted, time: .shortened))" } ?? "Plays until you stop it")
