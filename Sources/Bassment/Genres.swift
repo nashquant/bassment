@@ -26,7 +26,7 @@ struct Genre: Identifiable {
 
     static func find(_ id: String) -> Genre? { all.first { $0.id == id } }
 
-    // Third-party preset values: see NOTICE. Blues and Funk are ours.
+    // Third-party preset values: see NOTICE. Blues, Funk and Sleep are ours.
     static let all: [Genre] = [
         Genre(id: "flat", name: "Flat", gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
         Genre(id: "bassBooster", name: "Bass Booster", gains: [11, 8.5, 7, 5, 2.5, 0, 0, 0, 0, 0]),
@@ -47,6 +47,8 @@ struct Genre: Identifiable {
         Genre(id: "rnb", name: "R&B", gains: [5.24, 13.84, 11.3, 2.66, -4.38, -3, 4.64, 5.3, 6, 7.5]),
         Genre(id: "rock", name: "Rock", gains: [10, 8, 6, 3, -1, -2, 1, 5, 7, 9]),
         Genre(id: "smallSpeakers", name: "Small Speakers", gains: [11, 8.5, 7, 5, 2.5, 0, -2.5, -5, -7, -8.5]),
+        // Warm and soft for sleep audio: gentle low end, highs rolled off so hiss and sibilance fade back.
+        Genre(id: "sleep", name: "Sleep", gains: [5, 4.5, 3.5, 1.5, 0, -1, -3, -5, -7, -9]),
         Genre(id: "spokenWord", name: "Spoken Word", gains: [-6.92, -0.94, 0, 1.38, 6.92, 9.22, 9.68, 8.56, 5.08, 0]),
         Genre(id: "vocalBooster", name: "Vocal Booster", gains: [-3, -6, -6, 3, 7.5, 7.5, 6, 3, 0, -3]),
         Genre(id: "trebleBooster", name: "Treble Booster", gains: [0, 0, 0, 0, 0, 2.5, 5, 7, 8.5, 11]),
