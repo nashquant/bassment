@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 enum SleepSound: String, CaseIterable, Identifiable {
-    case pink, brown, rain, ocean
+    case pink, brown, rain, ocean, tone432
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -10,6 +10,7 @@ enum SleepSound: String, CaseIterable, Identifiable {
         case .brown: "Brown noise"
         case .rain: "Rain"
         case .ocean: "Ocean"
+        case .tone432: "432 Hz tone"
         }
     }
 }
@@ -45,6 +46,7 @@ struct NoiseGen {
     private(set) var gain: Float = 0
     private var l = Channel(seed: 0x1234_5678), r = Channel(seed: 0x9E37_79B9)
     private var wave: Float = 0, period: Float = 9
+    private var tone: Float = 0, sub: Float = 0, lfo: Float = 0
     private let fs: Float, smooth: Float, dropRate: Float, dropDecay: Float, rainLow: Float, rainHigh: Float
 
     init(sampleRate: Float) {
@@ -83,6 +85,8 @@ struct NoiseGen {
             let a = 1 - expf(-2 * .pi * (250 + 2200 * env * env) / fs) // brighter at the crest
             c.lp += a * (x - c.lp)
             return c.lp * env * 0.7
+        case .tone432:
+            return 0 // rendered in render(): both channels share the phase
         }
     }
 
@@ -96,6 +100,16 @@ struct NoiseGen {
                 eR = Self.swell(wave + 0.06) // the wave reaches one ear a little later
             }
             gain += (target - gain) * smooth
+            if sound == .tone432 {
+                // 432 Hz plus its lower octave, with a slow swell that drifts between the ears.
+                tone += 432 / fs; if tone >= 1 { tone -= 1 }
+                sub += 216 / fs; if sub >= 1 { sub -= 1 }
+                lfo += 0.08 / fs; if lfo >= 1 { lfo -= 1 }
+                let x = (sinf(2 * .pi * tone) * 0.6 + sinf(2 * .pi * sub) * 0.4) * 0.15 * gain
+                outL[i] = x * (0.75 + 0.25 * sinf(2 * .pi * lfo))
+                outR[i] = x * (0.75 + 0.25 * sinf(2 * .pi * (lfo + 0.25)))
+                continue
+            }
             outL[i] = min(max(sample(&l, env: eL) * gain, -1), 1)
             outR[i] = min(max(sample(&r, env: eR) * gain, -1), 1)
         }

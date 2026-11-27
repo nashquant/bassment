@@ -149,7 +149,7 @@ struct SleepPanel: View {
                 .labelsHidden().fixedSize()
                 Picker("Timer", selection: $c.settings.sleepMinutes) {
                     Text("No timer").tag(0)
-                    ForEach([15, 30, 60, 90], id: \.self) { Text("\($0) min").tag($0) }
+                    ForEach([30, 60, 90, 120, 180, 300, 480], id: \.self) { m in Text(m % 60 == 0 ? "\(m / 60) h" : "\(m) min").tag(m) }
                 }
                 .labelsHidden().fixedSize()
                 .onChange(of: c.settings.sleepMinutes) { c.restartSleepTimer() }

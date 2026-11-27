@@ -100,9 +100,10 @@ func selfTest() -> Bool {
         var ll = 0.0, rr = 0.0, lr = 0.0
         for i in 24000..<n { ll += Double(l[i] * l[i]); rr += Double(r[i] * r[i]); lr += Double(l[i] * r[i]) }
         let rms = (ll / Double(n - 24000)).squareRoot(), corr = lr / (ll * rr).squareRoot()
+        let tone = sound == .tone432 // a tone sounds louder than noise at the same RMS, and both ears share it
         expect(abs(l[0]) < 0.01 && (0..<n).allSatisfy { l[$0].isFinite && abs(l[$0]) <= 1 }
-               && rms > 0.07 && rms < 0.16 && abs(corr) < 0.2,
-               "sleep \(sound.rawValue): fades in, ~-19 dBFS, wide stereo")
+               && (tone ? rms > 0.03 && rms < 0.08 : rms > 0.07 && rms < 0.16 && abs(corr) < 0.2),
+               "sleep \(sound.rawValue): fades in, level in range\(tone ? "" : ", wide stereo")")
     }
     return ok
 }
